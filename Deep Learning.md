@@ -236,6 +236,11 @@ print('ptr of b:\n', b.storage().data_ptr())  # 查看b的存储空间地址
 **范数**：可以简单理解为向量的距离
 $ \Vert x + y \Vert \leq \Vert x \Vert + \Vert y \Vert $
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409221602725.png)
+**各种乘法运算的区别**
+|类型|计算方法|示例$ A = \begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix} B = \begin{bmatrix} 5 & 6 \\ 7 & 8 \end{bmatrix}$|
+|-|-|-|
+|*(星乘 asterisk)|矩阵/向量按照对应位置相乘|$ A \ast B = \begin{bmatrix} 1 \cdot 5 & 2 \cdot 6 \\ 3 \cdot 7 & 4 \cdot 8 \end{bmatrix}$|
+|·(点乘 dot)|矩阵/向量内积 相同位置的按元素乘积的和|$ A \cdot B = \begin{bmatrix} 1\cdot5 + 2\cdot7 & 1\cdot6 + 2\cdot8 \\ 3\cdot5 + 4\cdot7 &3\cdot6+4\cdot8\end{bmatrix}$|
 ```python
 import torch
 
@@ -356,4 +361,238 @@ try:
     print(torch.mv(a.T, b))
 except RuntimeError as e:
     print("作用在一维张量(数组)上的转置操作不起作用")
+```
+
+### 微积分
+**梯度**：在等高线上做正交方向，指向值变化最大的方向
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241009484.png)
+**矩阵的导数运算**：
+- *分子布局*  
+分子为列向量则求导为列向量，即求导结果的维度以分子为主
+- *分母布局*  
+分母为列向量则求导为列向量，即求导结果的维度以分母为主
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241045761.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241107129.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241040882.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241052214.png)
+
+### 自动微分
+**自动求导的原理**：计算图  
+- 将代码分解成操作子
+- 将计算表示成一个无环图
+- 计算图的构造 
+  - 显式构造：先给公式再给值（Tensorflow）
+  - 隐式构造：先给值再给公式（PyTorch）
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241414839.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241415315.png)
+```python
+import torch
+
+# * 一个简单的例子
+# 假设对 y = 2x.T x 关于列向量x求导
+x = torch.arange(4.0)
+print(x)
+
+# 计算y对x的梯度前，需要一个地方存储梯度
+x.requires_grad_(True) # 等价于 x = torch.arange(4.0, requires_grad=True)
+print(x.grad) # Default:None
+
+# 计算y
+y = 2 * torch.dot(x, x) # 作内积
+print(y)
+
+# 调用反向传播函数来自动计算y关于x每个分量的梯度
+y.backward() # ||x||^2 的导数是x.T 所以y对x的导数是4x.T
+print(x.grad)
+
+# 默认情况下，PyTorch会累积梯度，需要清除之前的值
+x.grad.zero_()
+y = x.sum() # y=x1+x2+...+xn 求导全为1.T
+y.backward()
+print(x.grad)
+
+# * 非标量的反向传播
+# 深度学习中，目的不是计算微分矩阵，而是批量中每个样本单独计算的偏导数之和
+# 对非标量调用 backward 需要传入一个 gradient 参数，该参数
+x.grad.zero_()
+y = x * x # 理论上 x是向量 y是向量 求导是一个矩阵，但机器学习绝大部分都是对标量进行求导，因此会在下面加一个sum()函数
+y.sum().backward() # 等价于y.backward(torch.ones(len(x)))
+print(x.grad)
+
+# * 分离计算
+# 将某些计算移动到记录的计算图之外
+x.grad.zero_()
+y = x * x 
+u = y.detach() # detach u将y视作一个常数，而不是与x相关的函数
+z = u * x # 所以求导的结果是u
+
+z.sum().backward()
+print(x.grad == u)
+
+x.grad.zero_()
+y.sum().backward()
+print(x.grad == 2 * x)
+
+# * Python控制流的梯度计算
+def f(a):
+    b = a * 2
+    while b.norm() < 1000: # norm()求欧几里得范数 即模长
+        b = b * 2
+    if b.sum() > 0:
+        c = b
+    else:
+        c = 100 * b
+    return c
+
+a = torch.randn(size=(), requires_grad=True)
+print(a)
+d = f(a)
+print(d)
+d.backward()
+
+print(a.grad == d / a)
+```
+
+## Chapter 2 ：线性神经网络
+### 线性回归
+*显示解*
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241557141.png)
+
+### 线性回归的从零开始实现
+```python
+import random
+import torch
+from d2l import torch as d2l
+
+# * 生成数据集
+# 根据带有噪声的线性模型构造一个人造数据集。我们使用线性模型参数w = [2, -3.4]T  b = 4.2和噪声项ε生成数据集及其标签 y = Xw + b + ε
+def synthetic_data(w, b, num_examples):
+    X = torch.normal(0, 1, (num_examples, len(w))) # X是符合均值为0，方差为1的正态分布的随机数
+    y = torch.matmul(X, w) + b
+    y += torch.normal(0, 0.01, y.shape)
+    return X, y.reshape((-1, 1))
+
+true_w = torch.tensor([2, -3.4])
+true_b = 4.2
+features, labels = synthetic_data(true_w, true_b, 1000)
+print(f'features:{features[0]}, label:{labels[0]}')
+
+# features中的每一行都包含一个二维数据样本，labels中每一个行都包含一个一维标签值(一个标量)
+d2l.set_figsize()
+d2l.plt.scatter(features[:, 0].detach().numpy(), labels.detach().numpy(), 1) # detach()返回一个新的tensor，从计算图中分离下来的，这样才可以转numpy
+d2l.plt.show()
+
+# * 读取数据集
+# 定义一个data_iter函数，该函数接收批量大小、特征矩阵和标签向量作为输入，生成大小为batch_size的小批量
+def data_iter(batch_size, features, labels):
+    num_examples = len(features)
+    indices = list(range(num_examples)) # 生成样本的索引列表
+    random.shuffle(indices) # 打乱索引值，样本是随机读取的，没有特定顺序
+    for i in range(0, num_examples, batch_size):
+        batch_indices = torch.tensor(
+            indices[i : min(i + batch_size, num_examples)] # 拿出当前批次的所有索引值(min的作用防止indices超出总数量)
+        )
+        yield features[batch_indices], labels[batch_indices] # yield的作用是return的迭代(生成器)，在循环结束前可以在有需要的时候一直返回值
+data_iter(64, features, labels)
+
+batch_size = 10
+
+for X, y in data_iter(batch_size, features, labels):
+    print(X, "\n", y)
+    break
+
+# * 初始化模型参数
+w = torch.normal(0, 0.01, size=(2, 1), requires_grad=True)
+b = torch.zeros(1, requires_grad=True)
+
+# * 定义模型
+def linreg(X, w, b):
+    return torch.matmul(X ,w) + b
+
+# * 定义损失函数
+def squared_loss(y_hat, y): # 均方损失 loss = 1/2n(y_hat-y)^2 样本量n在优化算法中计算
+    return (y_hat - y.reshape(y_hat.shape)) ** 2 / 2
+
+# * 定义优化算法
+def sgd(params, lr, batch_size): # 小批量随机梯度下降
+    with torch.no_grad(): # 梯度更新时不要参与梯度计算
+        for param in params:
+            param -= lr * param.grad / batch_size
+            param.grad.zero_()
+
+# * 训练过程
+lr = 0.03
+num_epochs = 3
+net = linreg
+loss = squared_loss
+
+for epoch in range(num_epochs):
+    for X, y in data_iter(batch_size, features, labels):
+        l = loss(net(X, w, b), y) # X 和 y 的小批量损失
+        l.sum().backward() # l的形状(batch_size, 1)不是标量 使用sum降维
+        sgd([w, b], lr, batch_size) # 对梯度进行更新
+
+    with torch.no_grad(): # 评价模型
+        train_1 = loss(net(features, w, b), labels)
+        print(f'epoch {epoch + 1}, loss {float(train_1.mean())}')
+
+# 比较真实参数和通过训练学到的参数来评估训练的成功程度
+print(f'w的估计误差:{true_w - w.reshape(true_w.shape)}')
+print(f'b的估计误差:{true_b - b}')
+```
+
+### 线性回归的简洁实现
+```python
+import numpy as np
+import torch
+from torch.utils import data
+from d2l import torch as d2l
+
+# * 生成数据集
+true_w = torch.tensor([2, -3.4])
+true_b = 4.2
+features, labels = d2l.synthetic_data(true_w, true_b, 1000)
+
+# * 读取数据集
+# 调用框架中现有的API来读取数据
+def load_array(data_arrays, batch_size, is_train=True):
+    # 构造一个PyTorch数据迭代器
+    dataset = data.TensorDataset(*data_arrays) # \ *data_arrays打包做成list传入TensorData
+    return data.DataLoader(dataset, batch_size, shuffle=is_train)
+
+batch_size = 10
+data_iter = load_array((features, labels), batch_size)
+
+print(next(iter(data_iter)))
+
+# * 定义模型
+# 使用框架的预定义好的层
+from torch import nn
+net = nn.Sequential(nn.Linear(2, 1))
+
+# * 初始化模型参数
+net[0].weight.data.normal_(0, 0.01) # 查看网络第0层 修改权重参数
+net[0].bias.data.fill_(0) # 偏差置0
+
+# * 定义损失函数
+# 均方误差 也成为平方L2范数 通过MESLoss()调用
+loss = nn.MSELoss()
+
+# * 定义优化算法
+# 实例化SGD
+trainer = torch.optim.SGD(net.parameters(), lr=0.03)
+
+# * 训练
+num_epochs = 3
+for epoch in range(num_epochs):
+    for X, y in data_iter:
+        l = loss(net(X), y)
+        trainer.zero_grad()
+        l.backward()
+        trainer.step()
+    
+    l = loss(net(features), labels)
+    print(f"epoch {epoch + 1}, loss {l:f}") # l:f 打印l 格式为浮点型
 ```
