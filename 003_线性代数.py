@@ -56,6 +56,7 @@ A = torch.arange(20, dtype=torch.float32).reshape(5, 4)
 print(A.shape, A.sum())
 
 # 指定求和汇总张量的轴 为了通过求和所有行的元素来降维（轴0），可以在调用函数时指定axis=0。
+# 沿着哪个轴求和 相当于把这个轴拍扁 把axis轴的元素去掉，剩下就是求和的结果shape
 A_sum_axis0 = A.sum(axis=0)
 print(A_sum_axis0, A_sum_axis0.shape)
 A_sum_axis1 = A.sum(axis=1)

@@ -295,6 +295,7 @@ A = torch.arange(20, dtype=torch.float32).reshape(5, 4)
 print(A.shape, A.sum())
 
 # 指定求和汇总张量的轴 为了通过求和所有行的元素来降维（轴0），可以在调用函数时指定axis=0。
+# 沿着哪个轴求和 相当于把这个轴拍扁 把axis轴的元素去掉，剩下就是求和的结果shape
 A_sum_axis0 = A.sum(axis=0)
 print(A_sum_axis0, A_sum_axis0.shape)
 A_sum_axis1 = A.sum(axis=1)
@@ -341,4 +342,18 @@ print(torch.abs(u).sum())
 
 # 弗罗贝尼乌斯范数 Frobenius norm 矩阵元素的平方和的平方根 ||X||_F = sqrt(sum^{nm}_{i=1}sum^{n}_{j=1}x_{ij}^2)
 print(torch.norm(torch.ones((4, 9))))
+```
+Torch中的一个向量对于计算机来说就是一个数组，没有行向量与列向量之分，如果想要区别行向量和列向量，需要用一个矩阵来表示(torch中一维数组会被视作列向量)
+```python
+import torch
+
+a = torch.tensor([1, 2 ,3], dtype=torch.float32)
+print(a, a.T)
+b = torch.ones(3, 3)
+print(torch.mv(b, a))
+print("一维张量(数组)默认列向量 (3, 3)(3, 1)")
+try:
+    print(torch.mv(a.T, b))
+except RuntimeError as e:
+    print("作用在一维张量(数组)上的转置操作不起作用")
 ```
