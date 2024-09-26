@@ -596,3 +596,238 @@ for epoch in range(num_epochs):
     l = loss(net(features), labels)
     print(f"epoch {epoch + 1}, loss {l:f}") # l:f 打印l 格式为浮点型
 ```
+
+### Softmax回归
+回归与分类的区别:
+- 回归估计一个连续值，单连续值输出，自然区间R，跟真实值的区别作为损失
+- 分类预测一个离散类别，输出i是预测为第i类的置信度
+
+**损失函数**：
+|损失函数|公式|似然函数|
+|:-:|:-:|:-:|
+|L2 Loss|$l(y,y') = \frac{1}{2}(y - y')^2$|$e^{-l}$|
+|L1 Loss|$l(y,y') = \vert y - y' \vert$|$e^{-l}$|
+|Huber's Robust Loss|$ l(y,y')= \begin{cases} 1\quad\quad\quad\quad\quad if\quad\vert y-y'\vert > 1  \\ \frac{1}{2}(y-y')^2 \quad otherwise \end{cases}$||
+
+**Softmax回归损失函数梯度的推导**：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261506954.png)
+**最小二乘法**：  
+二乘的意思是样本标签与估计值之差的平方$(y-y')^2$，这个平方就是二乘，最小二乘法的最小就是希望这个平方项最小化，从而预测值与真实值之间的差异足够小，证明模型预测的更加准确
+> 不使用 |y-y'| 是因为绝对值函数在R域上不是处处可导，使用平方项处处可导且不影响两者的关系，外面再乘1/2为了使求导后的函数计算更简单
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261418088.png)
+
+**似然值**：  
+真实的情况已经发生，假设有很多模型，在这个概率模型下，发生这种情况(真实情况)的可能性，称为似然值
+**最大似然估计**：  
+真实值已经发生，本来的概率模型应该是什么样子无法确定，但可以选择似然值最大的模型，这个概率模型和原本的概率模型应该是最接近的，这个方法是最大似然估计法
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261414232.png)
+**对吴恩达逻辑回归问题损失函数的推导**：
+P是在某种概率模型下，产生真实事件(图片是否为猫)的似然值，神经网络中用 $W,b$ 来代替概率 $\theta$，这个似然值最大时，认为神经网络训练的模型和人脑中对于判别猫的模型是一致的，因为在训练的时候 $W,b$ 是确定的，不论输入什么图片，输出值也确定，得到的标签要么为1要么为0，无法进行训练，但预测概率 $\hat{y}$ 的结果依赖于 $W,b$ ，因此用神经网络预测概率 $\hat{y}$ 来代替 $W,b$ ，模型概率符合伯努利分布。为了方便计算，将累乘转换为累加的形式，外面乘一个log函数(log不改变单调性)并乘一个负号(习惯求最小值)。
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261420703.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261445737.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409261444957.png)
+
+### 图像分类数据集
+```python
+import torch
+import torchvision
+from torch.utils import data
+from torchvision import transforms
+from d2l import torch as d2l
+
+d2l.use_svg_display() # 用svg显示图像 清晰度会更高
+
+# MNIST数据集是图像分类中广泛使用的数据集之一，但作为基准数据过于简单，这里使用类似但更复杂的Fashion-MNIST数据集
+# * 读取数据集
+# 通过框架中的内置函数将Fashion-MNIST数据集下载并读取到内存当中
+trans = transforms.ToTensor() # 将图像数据从PIL类型变换为32位浮点数格式Tensor
+print(type(trans))
+mnist_train = torchvision.datasets.FashionMNIST(root="./related_data", train=True,
+                                                transform=trans, download=True)
+mnist_test = torchvision.datasets.FashionMNIST(root="./related_data", train=False,
+                                                transform=trans, download=True)
+
+print(len(mnist_train), len(mnist_test))
+print(mnist_train[0][0].shape) # 第一维度0表示img图片，1表示标签target，第二维度0表示图片序号 灰度图像channel为1
+
+# 两个可视化数据集的函数
+def get_fashion_mnist_labels(labels): # 返回数据集的文本标签
+    text_labels = [
+        't-shirt', 'trouser', 'pullover', 'dress', 'coat',
+        'sandal', 'shirt', 'sneaker', 'bag', 'ankle boot'
+    ]
+    return [text_labels[int(i)] for i in labels]
+
+def show_images(imgs, num_rows, num_cols, titles=None, scale=1.5): # 绘图
+    figsize = (num_cols * scale, num_rows * scale) # 画窗大小
+
+    _, axes = d2l.plt.subplots(num_rows, num_cols, figsize=figsize) # fig 画窗 ax 坐标系
+    axes = axes.flatten()
+
+    for i, (ax, img) in enumerate(zip(axes, imgs)):
+        # enumerate() 函数用于在迭代过程中同时获取元素的索引和值，返回一个枚举对象，包含了索引和对应的元素
+        # 下划线_ 表示不需要的值，减少内存消耗
+        if torch.is_tensor(img): # 若数据类型为Tensor
+            ax.imshow(img.numpy())
+        else: # PIL图片
+            ax.imshow(img)
+        ax.axes.get_xaxis().set_visible(False)
+        ax.axes.get_yaxis().set_visible(False)
+        if titles:
+            ax.set_title(titles[i])
+    d2l.plt.show()
+    
+    return axes
+
+# 几个样本的图像及其相应的标签
+X, y = next(iter(data.DataLoader(mnist_train, batch_size=18)))
+show_images(X.reshape(18, 28, 28), 2, 9, titles=get_fashion_mnist_labels(y))
+
+# * 读取小批量
+# 读取一小批量数据，大小为batch_size
+batch_size = 256
+
+def get_dataloader_workers(): # 使用4个进程来读取数据
+    return 4
+
+train_iter = data.DataLoader(mnist_train, batch_size, shuffle=True,
+                                num_workers=get_dataloader_workers())
+
+timer = d2l.Timer()
+for X, y in train_iter:
+    continue
+print(f'{timer.stop():.2f} sec') # {} 中实际上存放的是表达式的值，可以在 {} 进行运算。使用content:format 的方式来设置字符串格式
+
+# * 整合所有组件
+# 定义 load_data_fashion_mnist函数
+def load_data_fashion_mnist(batch_size, resize=None):
+    trans = [transforms.ToTensor()]
+
+    if resize:
+        trans.insert(0, transforms.Resize(resize))
+    trans = transforms.Compose(trans) # compose传入list列表
+
+    mnist_train = torchvision.datasets.FashionMNIST(root="./related_data", train=True,
+                                                transform=trans, download=True)
+    mnist_test = torchvision.datasets.FashionMNIST(root="./related_data", train=False,
+                                                transform=trans, download=True)
+
+    return (data.DataLoader(mnist_train, batch_size, shuffle=True,
+                            num_workers=get_dataloader_workers()),
+            data.DataLoader(mnist_test, batch_size, shuffle=False,
+                            num_workers=get_dataloader_workers()))
+
+# 指定resize测试
+train_iter, test_iter = load_data_fashion_mnist(32, resize=64)
+for X, y in train_iter:
+    print(X.shape, X.dtype, y.shape, y.dtype)
+    break
+```
+
+**enumerate()函数**
+```python
+# 枚举列表
+fruits = ['apple', 'banana', 'orange']
+for index, fruit in enumerate(fruits):
+    print(index, fruit)
+
+# zip将多个可迭代对象组合
+fruits = ['apple', 'banana', 'orange']
+prices = [1.0, 0.5, 0.8]
+for index, (fruit, price) in enumerate(zip(fruits, prices)):
+    print(index, fruit, price)
+
+# print(list(zip(fruits, prices)))
+
+
+# 枚举字典的键值对
+fruits = {'apple':0.5, 'banana':1.0, 'orange':0.8}
+for index, (fruit, price) in enumerate(fruits.items()):
+    print(index, fruit, price)
+```
+
+**迭代器iter及生成器介绍**
+
+**可迭代对象**：list、tuple、dict、set、str
+
+**迭代器**iterator：
+- Iterator对象表示的是一个数据流，Iterator 对象可以被 next() 函数调用并不断返回下一个数据，直到没有数据时抛出 StopIteration 错误。可以把这个数据流看做是一个有序序列，但我们却不能提前知道序列的长度，只能不断通过 next() 函数实现按需计算下一个数据，所以 Iterator 的计算是惰性的，只有在需要返回下一个数据时它才会计算。
+- Iterator 甚至可以表示一个无限大的数据流，例如全体自然数。而使用 list 是永远不可能存储全体自然数的。
+
+**生成器**：  
+使用yield语句来生成迭代器，一种返回一个值的迭代器，每次从该迭代器取下一个值，可以节省内存空间和计算资源
+
+**生成器表达式**：
+生成器表达式是用圆括号来创建生成器，其语法与推导式相同，只是将 [] 换成了 () 。 生成器表达式会产生一个新的生成器对象。
+
+**迭代器和生成器的区别**：
+- 迭代器是实现了迭代器协议（即__iter__()和__next__()方法）的对象。生成器则是使用了yield关键字的函数，当这个函数被调用时，它返回一个生成器对象。
+- 生成器在每次产生一个值后会自动保存当前的状态，下次调用时会从上次离开的地方继续执行。而迭代器则不会自动保存状态，它依赖于用户显式地请求下一个值。
+- 生成器在迭代过程中只会生成当前需要的值，而不是一次性生成所有的值，所以它可以处理大数据集，而不会耗尽内存。而迭代器则可能需要一次性生成所有的值。
+- 迭代器可以被多次迭代，每次迭代都会从头开始。而生成器只能被迭代一次，因为它不保存整个序列，只保存当前的状态。
+- 生成器更加灵活，可以使用任何种类的控制流语句（如if，while等）。而迭代器则需要在__next__()方法中实现所有的控制流逻辑。
+- 总的来说，生成器是一种特殊的迭代器，它更加简洁，易于理解，同时也更加强大和灵活
+
+```python
+# 迭代器与列表
+''' 
+区别: 
+- 迭代器经历一次for in后，再次遍历返回空
+- 列表遍历多少次，表头位置是第一个元素
+- 迭代器遍历后，指向最后元素的下一个位置
+'''
+list_test = [1, 2, 3]
+b = iter(list_test)
+for i in b:
+    print(i)
+
+print("--------第二次遍历开始----------")
+for i in b:
+    print(i)
+print("--------第二次遍历结束----------")
+
+# 迭代器与字典
+# next是一个内建函数，用于从迭代器中获取下一个项目
+dict_test = {'Iven':20, 'Rosenn':22}
+print(next(iter(dict_test.keys())))
+print(next(iter(dict_test.values())))
+
+iter_dict_test = iter(dict_test)
+print(next(iter_dict_test)) # 字典迭代器默认遍历字典的键key
+print(next(iter_dict_test))
+try:
+    print(next(iter_dict_test))
+except StopIteration as r:
+    print(f"已到迭代器尾部，停止迭代")
+
+
+# 生成器
+# 使用圆括号创建生成器
+print(type([i for i in range(5)]))# 推导式表达式 for 迭代变量 in 可迭代对象 [if 条件表达式]
+print(type((i for i in range(5))))
+
+a = (i for i in range(5))
+print(next(a))
+print(next(a))
+
+a = [ i + 1 for i in range(5)] # 列表推导式
+print(a)
+
+# 生成器函数 yield
+# 函数如果包含 yield 指令，该函数调用的返回值是一个生成器对象，此时函数体中的代码并不会执行，只有显式或隐式地调用 next 的时候才会真正执行里面的代码。yield可以暂停一个函数并返回此时的中间结果。该函数将保存执行环境并在下一次恢复。
+def fun():
+    for i in range(5):
+        yield i
+
+f = fun()
+print(next(f)) # 显式
+print(next(f))
+
+for i in fun(): # 隐式
+    print(i)
+```
+### Softmax回归的从零开始实现
+
+
+### Softmax回归的简洁实现
