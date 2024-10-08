@@ -828,6 +828,650 @@ for i in fun(): # 隐式
     print(i)
 ```
 ### Softmax回归的从零开始实现
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409271608029.png)
+```python
+import torch
+from IPython import display
+from d2l import torch as d2l
 
+batch_size = 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+
+# * 初始化模型参数
+# 对于Softmax回归，输入是一个向量，因此将展平每个图像，将它们视为长度为784的向量
+num_inputs = 784
+num_outputs = 10 # 10个类别
+
+W = torch.normal(0, 0.01, size=(num_inputs, num_outputs), requires_grad=True)
+b = torch.zeros(num_outputs, requires_grad=True)
+
+# * 定义Softmax操作
+# 给定一个矩阵X，我们可以对所有元素求和
+X = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+print(X.sum(0, keepdim=True), X.sum(1, keepdim=True))
+
+# 实现Softmax
+def softmax(X):
+    X_exp = torch.exp(X)
+    partition = X_exp.sum(1, keepdim=True) # 对行进行求和(每个样本是一行，上面将图像展平)
+    # print(partition)
+
+    return X_exp / partition # 利用广播机制
+
+# 将没每个元素变成一个非负数，根据概率原理，每行总和为1
+X = torch.normal(0, 1, (2, 5))
+X_prob = softmax(X)
+print(X_prob, X_prob.sum(1))
+
+# * 定义模型
+def net(X):
+    return softmax(torch.matmul(X.reshape((-1, W.shape[0])), W) + b) # W.shape[0]=784 -1这里计算的是batch_size * dims
+
+# * 定义损失函数
+# 创建数据y_hat，其中包含2个样本在3个类别的预测概率，使用y作为y_hat中概率的索引
+y = torch.tensor([0, 2])
+y_hat = torch.tensor([[0.1, 0.3, 0.6], [0.3, 0.2, 0.5]])
+print(y_hat[[0, 1], y]) # 索引数组 第一个子数组选择行 第二个子数组选择列[[0, 1], [0, 2]] 输出[0,0]和[1,2]的数据
+
+# 实现交叉熵损失函数
+def cross_entropy(y_hat, y):
+    return -torch.log(y_hat[range(len(y_hat)), y]) # len计算第0维度
+print(cross_entropy(y_hat, y))
+
+# 将预测类别与真实y元素进行比较
+def accuracy(y_hat, y):
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1: # 判断张量是否大于大于1维度，判断列(第二个维度是否大于1)
+        y_hat = y_hat.argmax(axis=1)
+    # 由于==对数据类型比较敏感，为了确保y_hat y的数据类型一致，将y_hat转为y的数据类型，结果是一个包含0(错)与1(对)的张量
+    cmp = y_hat.type(y.dtype) == y 
+
+    return float(cmp.type(y.dtype).sum()) # 将cmp类型转为tensor并求和，得到正确预测的数量
+# 计算正确率
+print(accuracy(y_hat, y) / len(y))
+
+# * 分类精度
+# 评估在任意模型net的准确率
+def evaluate_accuracy(net, data_iter):
+    '''
+    isinstance()用来判断一个对象是否是一个已知的类型 
+    isinstance(object,classtype)
+    object -- 实例对象。
+    classtype -- 可以是直接或间接类名、基本类型或者由它们组成的元组。
+    '''
+    if isinstance(net, torch.nn.Module):
+        net.eval() # 转评估模型
+    
+    metric = Accumulator(2)
+
+    with torch.no_grad():
+        for X, y in data_iter:
+            metric.add(accuracy(net(X), y), y.numel())
+    
+    return metric[0] / metric[1]
+
+# 示例创建2个变量，用于存储正确预测和预测的总数量
+class Accumulator:
+    def __init__(self, n):
+        self.data = [0.0] * n
+    
+    def add(self, *args):
+        self.data = [a + float(b) for a, b in zip(self.data, args)]
+    
+    def reset(self):
+        self.data = [0.0] * len(self.data)
+    
+    def __getitem__(self, idx): # 使对象可以使用索引操作
+        return self.data[idx]
+
+'''
+CPU性能不够，可能会导致发生DataLoader worker exited unexpectedly
+
+原因：采用多进程加载数据时，python需要重新导入模块以启动每个子进程，这个重复过程会执行模块中的顶级代码，若CPU性能不足以多次调用模块，则会报错
+
+解决方法：
+1. 在d2l包中的torch模块get_dataloader_workers()返回值改为0 不启用多线程 这里采用方法1
+2. 将下面代码放入if __name__ == '__main__'，可以防止模块被多次导入时重复执行evaluate_accuracy函数
+
+'''
+print(evaluate_accuracy(net, test_iter))
+
+# * 训练
+# Softmax回归的训练
+def train_epoch_ch3(net, train_iter, loss, updater):
+    if isinstance(net, torch.nn.Module):
+        net.train()
+    
+    metric = Accumulator(3)
+
+    for X, y in train_iter:
+        y_hat = net(X)
+        l = loss(y_hat, y)
+
+        if isinstance(updater, torch.optim.Optimizer): # 使用PyTorch内置的优化器和损失函数
+            updater.zero_grad()
+            l.backward()
+            updater.step()
+            # 这里乘len(y)的原因是 pytorch自动对loss取均值
+            metric.add(float(l) * len(y), accuracy(y_hat, y), y.size.numel()) # loss累加值 正确个数 样本总个数
+        
+        else: # 使用自己写的优化器和损失函数
+            l.sum().backward() # 自己写的损失是一个向量
+            updater(X.shape[0])
+            metric.add(float(l.sum()), accuracy(y_hat, y), y.numel())
+    
+    return metric[0] / metric[2], metric[1] / metric[2] # 返回训练loss和正确率acc
+
+# 定义一个在动画中绘制数据的实用程序类 (暂时跳过)
+class Animator:  #@save
+    """在动画中绘制数据"""
+    def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
+                ylim=None, xscale='linear', yscale='linear',
+                fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
+                figsize=(3.5, 2.5)):
+        # 增量地绘制多条线
+        if legend is None:
+            legend = []
+        d2l.use_svg_display()
+        self.fig, self.axes = d2l.plt.subplots(nrows, ncols, figsize=figsize)
+        if nrows * ncols == 1:
+            self.axes = [self.axes, ]
+        # 使用lambda函数捕获参数
+        self.config_axes = lambda: d2l.set_axes(
+            self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend)
+        self.X, self.Y, self.fmts = None, None, fmts
+
+    def add(self, x, y):
+        # 向图表中添加多个数据点
+        if not hasattr(y, "__len__"):
+            y = [y]
+        n = len(y)
+        if not hasattr(x, "__len__"):
+            x = [x] * n
+        if not self.X:
+            self.X = [[] for _ in range(n)]
+        if not self.Y:
+            self.Y = [[] for _ in range(n)]
+        for i, (a, b) in enumerate(zip(x, y)):
+            if a is not None and b is not None:
+                self.X[i].append(a)
+                self.Y[i].append(b)
+        self.axes[0].cla()
+        for x, y, fmt in zip(self.X, self.Y, self.fmts):
+            self.axes[0].plot(x, y, fmt)
+        self.config_axes()
+        display.display(self.fig)
+        d2l.plt.pause(0.01)
+        display.clear_output(wait=True)
+
+# 训练函数
+def train_ch3(net,train_iter, test_iter, loss, num_epochs, updater):
+    animator = Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0.3, 0.9],
+                        legend=['train loss', 'train acc', 'test acc'])
+    
+    for epoch in range(num_epochs):
+        train_metrics = train_epoch_ch3(net, train_iter, loss, updater) # 训练损失
+        test_acc = evaluate_accuracy(net, train_iter) # 测试集精度
+        animator.add(epoch + 1, train_metrics + (test_acc, ))
+    
+    train_loss, train_acc = train_metrics
+
+lr = 0.1
+# 使用小批量随机梯度下降来优化模型的损失函数
+def updater(batch_size):
+    return d2l.sgd([W, b], lr, batch_size)
+
+# 训练模型10个迭代周期
+num_epochs = 10
+train_ch3(net, train_iter, test_iter, cross_entropy, num_epochs, updater)
+d2l.plt.show()
+
+# * 预测
+def predict_ch3(net, test_iter, n=6):
+    for X, y in test_iter:
+        break
+
+    trues = d2l.get_fashion_mnist_labels(y)
+    preds = d2l.get_fashion_mnist_labels(net(X).argmax(axis=1))
+    titles = [true + '\n' + pred for true, pred in zip(trues, preds)]
+
+    d2l.show_images(X[0:n].reshape((n, 28, 28)), 1, n, titles=titles[0:n])
+    d2l.plt.show()
+
+predict_ch3(net, test_iter)
+```
 
 ### Softmax回归的简洁实现
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+batch_size = 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+
+# * 初始化模型参数
+# Softmax回归的输出层是一个全连接层
+net = nn.Sequential(nn.Flatten(), nn.Linear(784, 10))
+
+def init_weights(m): # m是Layer层
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, std=0.01) # 初始化
+
+net.apply(init_weights)
+
+# * 重新审视Softmax的实现
+# 在交叉熵损失函数中传递未归一化的预测，并同时计算Softmax及其对数
+loss = nn.CrossEntropyLoss(reduction='none') 
+
+# * 优化算法
+trainer = torch.optim.SGD(net.parameters(), lr=0.1)
+
+# * 训练
+# 调用之前定义的训练函数来训练模型
+num_epochs = 10
+d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
+d2l.plt.show()
+```
+
+## Chapter 3 : 多层感知机
+### 多层感知机
+**感知机**：二分类问题，不能拟合XOR（异或）函数，只能线性分割面
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410080915781.png)
+**收敛定理**：存在余量 $\rho$ 保证感知机可以找到分割线，值越大，代表两个类别越容易分割开来
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410080919489.png)
+**多层感知机**：使用隐藏层和激活函数来得到非线性模型，用多个分割线来完成分类任务，可以完成XOR问题
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410080947469.png)
+多层感知机与Softmax回归的区别：多层感知机多了隐藏层  
+**激活函数**：
+|激活函数名|公式|作用|
+|-|-|-|
+|Sigmoid|$sigmoid(x)=\frac{1}{1+\exp{-x}} $|将输入变换为区间(0, 1)上的输出|
+|Tanh|$ tanh(x)=\frac{1-\exp{-2x}}{1+\exp{-2x}} $|将输入变换为区间(-1, 1)上的输出|
+|ReLU|$ ReLU(x) = max(x,0) $|仅保留正元素并丢弃所有负元素|
+
+### 多层感知机的从零开始实现
+```python
+import torch
+from d2l import torch as d2l
+from torch import nn
+
+batch_size = 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+
+# * 初始化模型参数
+# 实现一个具有单隐藏层的多层感知机，它包含256个隐藏单元
+num_inputs, num_outputs, num_hiddens = 784, 10, 256
+
+W1 = nn.Parameter(torch.randn(num_inputs, num_hiddens, requires_grad=True) * 0.01)
+b1 = nn.Parameter(torch.zeros(num_hiddens, requires_grad=True))
+W2 = nn.Parameter(torch.randn(num_hiddens, num_outputs, requires_grad=True) * 0.01)
+b2 = nn.Parameter(torch.zeros(num_outputs, requires_grad=True))
+
+params = [W1, b1, W2, b2]
+
+# * 激活函数
+# 实现ReLU
+def relu(X):
+    a = torch.zeros_like(X)
+    return torch.max(X, a) 
+
+# * 模型
+def net(X):
+    X = X.reshape((-1, num_inputs))
+    H = relu(X @ W1 + b1) # @ 是矩阵乘法
+    return (H @ W2 + b2)
+
+# * 损失函数
+loss = nn.CrossEntropyLoss(reduction='none')
+
+# * 训练
+# 多层感知机训练过程与softmax回归的训练过程相同
+num_epochs, lr = 10, 0.1
+updater = torch.optim.SGD(params, lr)
+d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, updater)
+```
+
+### 多层感知机的简洁实现
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 模型
+net = nn.Sequential(nn.Flatten(),
+                    nn.Linear(784, 256),
+                    nn.ReLU(),
+                    nn.Linear(256, 10))
+
+def init_weights(m):
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, std=0.01)
+net.apply(init_weights)
+
+batch_size, lr, num_epochs = 256, 0.1, 10
+loss = nn.CrossEntropyLoss()
+trainer = torch.optim.SGD(net.parameters(), lr=lr)
+
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
+```
+
+### 模型选择、欠拟合和过拟合
+**训练误差和泛化误差**：
+- 训练误差：模型在训练数据上的误差
+- 泛化误差：模型在新数据上的误差
+
+**训练数据集、验证数据集和测试数据集**：
+- 训练数据集：训练模型参数
+- 验证数据集：选择模型超参数，用于评估模型好坏的数据集
+- 测试数据集：只用一次的数据集
+
+**K-则交叉验证**：在没有足够多数据时使用(非大数据集)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081132549.png)
+
+**过拟合和欠拟合**：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081222437.png)
+
+**模型容量**：
+- 拟合各种函数的能力
+- 低容量模型难以拟合训练数据
+- 高容量模型可以记住所有的训练数据
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081223930.png)
+
+**VC维**:等于一个最大的数据集大小，不管如何给定标号，都存在一个模型对它进行完美分类，VC维可以衡量训练误差和泛化误差之间的间隔
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081525947.png)
+
+**数据复杂度**：
+- 样本个数
+- 每个样本的元素个数
+- 时间、空间结构
+- 多样性
+
+总结：模型容量需要匹配数据复杂度，否则会导致欠拟合或过拟合
+```python
+import math
+import numpy as np
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 多项式回归
+# * 生成数据集
+max_degree = 20 # 多项式最大阶数
+n_train, n_test = 100, 100 # 训练和测试集大小
+true_w = np.zeros(max_degree) # 分配空间
+true_w[0:4] = np.array([5, 1.2, -3.4, 5.6]) # 只有前四个有数值，后面多项式的系数是噪音
+
+features = np.random.normal(size=(n_train + n_test, 1))
+np.random.shuffle(features)
+poly_features = np.power(features, np.arange(max_degree).reshape(1, -1))
+for i in range(max_degree):
+    poly_features[:, i] /= math.gamma(i + 1) # gamma(n) = (n-1)!
+
+labels = np.dot(poly_features, true_w)
+labels += np.random.normal(scale=0.1, size=labels.shape)
+
+# 看一下前两个样本
+true_w, features, poly_features, labels = [
+    torch.tensor(x, dtype=torch.float32) for x in [true_w, features, poly_features, labels]]
+# print(features[:2], poly_features[:2, :], labels[:2])
+
+# * 对模型进行训练和测试
+# 定义函数评估损失
+def evaluate_loss(net, data_iter, loss):
+    metric = d2l.Accumulator(2)
+    for X, y in data_iter:
+        out = net(X)
+        y = y.reshape(out.shape)
+        l = loss(out, y)
+        metric.add(l.sum(), l.numel())
+    
+    return metric[0] / metric[1]
+
+# 定义训练函数
+def train(train_features, test_features, train_labels, test_labels, num_epochs=400):
+    loss = nn.MSELoss(reduction='none')
+
+    input_shape = train_features.shape[-1]
+    net = nn.Sequential(nn.Linear(input_shape, 1, bias=False))
+
+    batch_size = min(10, train_labels.shape[0])
+    train_iter = d2l.load_array((train_features, train_labels.reshape(-1, 1)), batch_size)
+    test_iter = d2l.load_array((test_features, test_labels.reshape(-1,1)),
+                                batch_size, is_train=False)
+    trainer = torch.optim.SGD(net.parameters(), lr=0.01)
+    animator = d2l.Animator(xlabel='epoch', ylabel='loss', yscale='log',
+                            xlim=[1, num_epochs], ylim=[1e-3, 1e2],
+                            legend=['train', 'test'])
+    for epoch in range(num_epochs):
+        d2l.train_epoch_ch3(net, train_iter, loss, trainer)
+        if epoch == 0 or (epoch + 1) % 20 == 0:
+            animator.add(epoch + 1, (evaluate_loss(net, train_iter, loss),
+                                    evaluate_loss(net, test_iter, loss)))
+    print('weight:', net[0].weight.data.numpy())
+
+# * 三阶多项式函数拟合(正常)
+train(poly_features[:n_train, :4], poly_features[n_train:, :4], labels[:n_train], labels[n_train:]) # 从多项式特征中选择前四个维度
+
+# * 线性函数拟合(欠拟合)
+train(poly_features[:n_train, :2], poly_features[n_train:, :2], labels[:n_train], labels[n_train:]) # 从多项式特征中选择前两个维度
+
+# * 高阶多项式函数拟合(过拟合)
+train(poly_features[:n_train, :], poly_features[n_train:, :], labels[:n_train], labels[n_train:]) # 从多项式特征中选择全部维度
+```
+
+### 权重衰减
+**L2正则化**：
+- 硬性限制
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081637533.png)
+- 柔性限制
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081639202.png)
+
+**参数更新法则**：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410081650439.png)
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# ? 高维线性回归
+# * 从零开始实现
+# 生成数据集
+n_train, n_test, num_inputs, batch_size = 20, 100, 200, 5
+true_w, true_b = torch.ones((num_inputs, 1)) * 0.01, 0.05
+train_data = d2l.synthetic_data(true_w, true_b, n_train)
+train_iter = d2l.load_array(train_data, batch_size)
+test_data = d2l.synthetic_data(true_w, true_b, n_test)
+test_iter = d2l.load_array(test_data, batch_size, is_train=False)
+
+# 初始化模型参数
+def init_params():
+    w = torch.normal(0, 1, size=(num_inputs, 1), requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    return [w, b]
+
+# 定义L2范数惩罚
+def l2_penalty(w):
+    return torch.sum(w.pow(2)) / 2
+
+# 定义训练代码实现
+def train(lambd):
+    w, b = init_params()
+    net, loss = lambda X: d2l.linreg(X, w, b), d2l.squared_loss
+    num_epochs, lr = 100, 0.003
+    animator = d2l.Animator(xlabel='epochs', ylabel='loss', yscale='log',
+                            xlim=[5, num_epochs], legend=['train', 'test'])
+    for epoch in range(num_epochs):
+        for X, y in train_iter:
+            # 增加了L2范数惩罚项，
+            # 广播机制使l2_penalty(w)成为一个长度为batch_size的向量
+            l = loss(net(X), y) + lambd * l2_penalty(w)
+            l.sum().backward()
+            d2l.sgd([w, b], lr, batch_size)
+        if (epoch + 1) % 5 == 0:
+            animator.add(epoch + 1, (d2l.evaluate_loss(net, train_iter, loss),
+                                    d2l.evaluate_loss(net, test_iter, loss)))
+    print('w的L2范数是：', torch.norm(w).item())
+    d2l.plt.waitforbuttonpress()
+
+# # 忽略正则化直接训练
+# train(lambd=0)
+
+# # 使用权重衰减
+# train(lambd=3)
+
+# * 简洁实现
+def train_concise(wd):
+    net = nn.Sequential(nn.Linear(num_inputs, 1))
+    for param in net.parameters():
+        param.data.normal_()
+    loss = nn.MSELoss(reduction='none')
+    num_epochs, lr = 100, 0.003
+    # 偏置参数没有衰减
+    trainer = torch.optim.SGD([
+        {"params":net[0].weight,'weight_decay': wd}, # 在这里设置超参数
+        {"params":net[0].bias}], lr=lr)
+    animator = d2l.Animator(xlabel='epochs', ylabel='loss', yscale='log',
+                            xlim=[5, num_epochs], legend=['train', 'test'])
+    for epoch in range(num_epochs):
+        for X, y in train_iter:
+            trainer.zero_grad()
+            l = loss(net(X), y)
+            l.mean().backward()
+            trainer.step()
+        if (epoch + 1) % 5 == 0:
+            animator.add(epoch + 1,
+                        (d2l.evaluate_loss(net, train_iter, loss),
+                        d2l.evaluate_loss(net, test_iter, loss)))
+    print('w的L2范数：', net[0].weight.norm().item())
+    d2l.plt.waitforbuttonpress()
+
+train_concise(0)
+train_concise(3)
+```
+
+### 暂退法(Dropout)
+丢弃发将一些输出项随机置0来控制模型复杂度，常作用在多层感知机的隐藏层输出上，丢弃概率是超参数
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410082023639.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410082024947.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 从零开始实现
+def dropout_layer(X, dropout):
+    '''
+    assert, 断言语句，可以看做是功能缩小版的if语句，它用于判断某个表达式的值
+    如果值为真，则程序可以继续往下执行
+    反之，Python 解释器会报 AssertionError 错误。
+    '''
+    assert 0 <= dropout <= 1
+
+    if dropout == 1:
+        return torch.zeros_like(X)
+    if dropout == 0:
+        return X
+    
+    mask = (torch.rand(X.shape) > dropout).float() # rand生成[0,1)的随机数与失活率作比较
+    return mask * X / (1.0 - dropout)
+
+# 测试
+X = torch.arange(16, dtype=torch.float32).reshape((2, 8))
+print(X)
+print(dropout_layer(X, 0.))
+print(dropout_layer(X, 0.5))
+print(dropout_layer(X, 1))
+
+# 定义模型
+num_inputs, num_outputs, num_hiddens1, num_hiddens2 = 784, 10, 256, 256
+
+dropout1, dropout2 = 0.2, 0.5
+
+class Net(nn.Module):
+    def __init__(self, num_inputs, num_outputs, num_hiddens1,
+                num_hiddens2, is_training=True):
+        super(Net, self).__init__()
+        self.num_inputs = num_inputs
+        self.training = is_training
+        self.lin1 = nn.Linear(num_inputs, num_hiddens1)
+        self.lin2 = nn.Linear(num_hiddens1, num_hiddens2)
+        self.lin3 = nn.Linear(num_hiddens2, num_outputs)
+        self.relu = nn.ReLU()
+    
+    def forward(self, X):
+        H1 = self.relu(self.lin1(X.reshape((-1, self.num_inputs))))
+        if self.training:
+            H1 = dropout_layer(H1, dropout1)
+        
+        H2 = self.relu(self.lin2(H1))
+        if self.training:
+            H2 = dropout_layer(H2, dropout2)
+        
+        out = self.lin3(H2)
+        return out
+
+net = Net(num_inputs, num_outputs, num_hiddens1, num_hiddens2)
+
+# 训练和测试
+num_epochs, lr, batch_size = 10, 0.5, 256
+loss = nn.CrossEntropyLoss(reduction = 'none')
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+trainer = torch.optim.SGD(net.parameters(), lr=lr)
+d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
+d2l.plt.waitforbuttonpress()
+
+# * 简洁实现
+net = nn.Sequential(
+    nn.Flatten(),
+    nn.Linear(784, 256),
+    nn.ReLU(),
+    nn.Dropout(dropout1), 
+    nn.Linear(256, 256), 
+    nn.ReLU(), 
+    nn.Dropout(dropout2),
+    nn.Linear(256, 10))
+
+def init_weights(m):
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, std=0.01)
+net.apply(init_weights)
+
+trainer = torch.optim.SGD(net.parameters(), lr=lr)
+d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
+d2l.plt.waitforbuttonpress()
+```
+
+### 前向传播、反向传播和计算图
+
+### 数值稳定性和模型初始化
+
+### 环境和分布偏移
+
+### 实战Kaggle比赛：预测房价
+
+## Chapter 4 : 深度学习计算
+
+## Chapter 5 : 卷积神经网络
+
+## Chapter 6 : 现代卷积神经网络
+
+## Chapter 7 : 循环神经网络
+
+## Chapter 8 : 现代循环神经网络
+
+## Chapter 9 : 注意力机制
+
+## Chapter 10 : 优化算法
+
+## Chapter 11 : 计算性能
+
+## Chapter 12 : 计算机视觉
+
+## Chapter 13 : 自然语言处理: 预训练
+
+## Chapter 14 : 自然语言处理: 应用
+
+## Chapter 15 : 深度学习工具
