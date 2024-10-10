@@ -368,10 +368,14 @@ except RuntimeError as e:
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241009484.png)
 **矩阵的导数运算**：
 - *分子布局*  
-分子为列向量则求导为列向量，即求导结果的维度以分子为主
+求导结果的行数和分子相同
 - *分母布局*  
-分母为列向量则求导为列向量，即求导结果的维度以分母为主
+求导结果的行数和分母相同
 
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101532632.jpg)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101533623.jpg)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101533284.jpg)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101533835.jpg)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241045761.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241107129.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202409241040882.png)
@@ -1444,9 +1448,51 @@ d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
 d2l.plt.waitforbuttonpress()
 ```
 
-### 前向传播、反向传播和计算图
-
 ### 数值稳定性和模型初始化
+**数值稳定性的两个问题**：
+- **梯度爆炸**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101539328.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101534041.jpg)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101540466.png)
+如果 d (神经网络层数) - t (第几层)较大且w矩阵中会有一些大于1的权值 ，则最终结果累乘起来会很大
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101545453.png)
+- **梯度消失**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101550796.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101551778.png)
+如果 d (神经网络层数) - t (第几层)较大且上一层输出值很大导致激活函数梯度过小 ，则最终结果累乘起来会很小
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101554053.png)
+- 总结：数值过大或过小均会导致数值问题，尤其是深度网络模型
+- 解决办法：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101556905.png)
+
+**理想的参数**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101601223.png)
+
+**权重初始化**
+训练开始时梯度更容易更加大，而在最优解附近梯度一般较小
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101658885.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101700683.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101640268.jpg)
+方差与期望的关系
+$ D(X)=E(X^2)−E^2(X) $
+独立同分布随机变量的乘积的期望，等于各自期望的乘积，此处各自期望均等于0
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101709033.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101709284.PNG)
+
+**Xavier初始化方法**  
+因为每一层输出维度不能确定，所以同时实现如图公式很难满足，但可以做权衡尽量满足要求
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101713785.png)
+
+为了使前面每一层输出均值为0，方差相等，则激活函数 $ \sigma(x)=\alpha x + \beta = x$
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101717778.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101719518.png)
+
+为了满足数值稳定性，激活函数在x=0附近应满足$f(x) = x$，由泰勒展开可以看出，$tanh(x)$ 和 $relu(x)$均满足，但sigmoid函数不满足，因此需要调整
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101721259.png)
+
+**提升数值稳定性的方法**：
+- 合理的权重初始值
+- 合理的激活函数
 
 ### 环境和分布偏移
 
