@@ -1494,9 +1494,12 @@ $ D(X)=E(X^2)−E^2(X) $
 - 合理的权重初始值
 - 合理的激活函数
 
-### 环境和分布偏移
-
 ### 实战Kaggle比赛：预测房价
+**Z-score 数值标准化原理**:
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410111146409.jpg)
+
+**评估模型的指标**：相对误差
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410111458315.jpg)
 
 ## Chapter 4 : 深度学习计算
 
