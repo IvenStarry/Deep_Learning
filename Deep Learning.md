@@ -1502,8 +1502,341 @@ $ D(X)=E(X^2)−E^2(X) $
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410111458315.jpg)
 
 ## Chapter 4 : 深度学习计算
+### 模型构造
+```python
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+net = nn.Sequential(nn.Linear(20, 256), nn.ReLU(), nn.Linear(256, 10))
+
+X = torch.rand(2, 20)
+print(net(X))
+
+# * 自定义块
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__() # super()调用父类函数
+        self.hidden = nn.Linear(20, 256)
+        self.out = nn.Linear(256, 10)
+    
+    def forward(self, X):
+        return self.out(F.relu(self.hidden(X))) # F中的relu是实现了一个函数，而nn.relu实现的是对象
+
+# 实例化多层感知机的层
+net = MLP()
+print(net(X))
+
+# * 顺序块
+# Sequential类的工作原理
+class MySequential(nn.Module):
+    def __init__(self, *args):
+        super().__init__()
+        for block in args:
+            self._modules[block] = block # 将输入进来的需要的层放入modules，按序字典，自己作为自己的key
+    
+    def forward(self, X):
+        for block in self._modules.values():
+            X =  block(X) # block有次序，将X输入进去会按序得到输出
+        return X
+
+net = MySequential(nn.Linear(20, 256), nn.ReLU(), nn.Linear(256, 10))
+print(net(X))
+
+# * 在前向传播函数中执行代码
+class FixedHiddenMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.rand_weight = torch.rand((20, 20), requires_grad=False)
+        self.linear = nn.Linear(20, 20)
+    
+    def forward(self, X):
+        X = self.linear(X)
+        X = F.relu(torch.mm(X, self.rand_weight) + 1)
+        X = self.linear(X)
+        while X.abs().sum() > 1:
+            X /= 2
+        return X.sum()
+
+net = FixedHiddenMLP()
+print(net(X))
+
+# 混合搭配各种组合块
+class NestMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(20, 64), nn.ReLU(),
+                                nn.Linear(64, 32), nn.ReLU())
+        self.linear = nn.Linear(32, 16)
+    
+    def forward(self, X):
+        return self.linear(self.net(X))
+
+chimera = nn.Sequential(NestMLP(), nn.Linear(16, 20), FixedHiddenMLP()) # 嵌套块(灵活性)
+print(chimera(X))
+```
+
+### 参数管理
+```python
+import torch
+from torch import nn
+
+net = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 1))
+X = torch.rand(size=(2, 4))
+print(net(X)) # # 通过call魔术方法实现让类可以像函数一样调用
+
+# * 参数访问
+print(net[2].state_dict()) # 通过getitem魔术方法实现索引访问
+
+# 目标参数
+print(type(net[2].bias))
+print(net[2].bias)
+print(net[2].bias.data)
+print(net[2].weight.grad == None) # 反向传播后才会有值
+
+# 一次性访问所有参数
+print(*[(name, param.shape) for name, param in net[0].named_parameters()])
+print(*[(name, param.shape) for name, param in net.named_parameters()])
+print(net.state_dict()['2.bias'].data)
+
+# 从嵌套块收集参数
+def block1():
+    return nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 4), nn.ReLU())
+
+def block2():
+    net = nn.Sequential()
+    for i in range(4):
+        net.add_module(f'block {i}', block1())
+    return net
+
+rgnet = nn.Sequential(block2(), nn.Linear(4, 1))
+print(rgnet(X))
+
+# 查看网络结构
+print(rgnet)
+
+# * 参数初始化
+# 内置初始化
+def init_normal(m):
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, mean=0, std=0.01) # _的意思是替换掉原有参数(原地操作)，而不是返回一个值
+        nn.init.zeros_(m.bias)
+net.apply(init_normal) # apply 对net里的所有层进行循环(for loop)，将module传入进init_normal进行调用
+print(net[0].weight.data[0], net[0].bias.data[0])
+
+def init_constant(m):
+    if type(m) == nn.Linear:
+        nn.init.constant_(m.weight, 1)
+        nn.init.zeros_(m.bias)
+net.apply(init_constant)
+print(net[0].weight.data[0], net[0].bias.data[0])
+
+# 对某些块应用不同的初始化方法
+def xavier(m):
+    if type(m) == nn.Linear:
+        nn.init.xavier_uniform_(m.weight) # 均匀分布
+
+def init_42(m):
+    if type(m) == nn.Linear:
+        nn.init.constant_(m.weight, 42)
+
+net[0].apply(xavier)
+net[2].apply(init_42)
+print(net[0].weight.data[0])
+print(net[2].weight.data)
+
+# * 自定义初始化
+def my_init(m):
+    if type(m) == nn.Linear:
+        print(
+            'Init',
+            *[(name, param.shape) for name, param in m.named_parameters()][0]
+        )
+        nn.init.uniform_(m.weight, -10, 10)
+        m.weight.data *= m.weight.data.abs() >= 5 # 保留绝对值大于5的权重(若权重大于5 判断为True即1 保留，否则为0 舍去)
+
+net.apply(my_init)
+print(net[0].weight[:2])
+
+# 或者直接设置参数
+net[0].weight.data[:] += 1
+net[0].weight.data[0, 0] = 42
+print(net[0].weight.data[0])
+
+# * 参数绑定
+# 共享权重
+shared = nn.Linear(8, 8)
+net = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), shared, nn.ReLU(), shared, nn.ReLU(), nn.Linear(8, 1))
+print(net(X))
+print(net[2].weight.data[0] == net[4].weight.data[0])
+net[2].weight.data[0, 0] = 100 # shared指向同一片内存
+print(net[2].weight.data[0] == net[4].weight.data[0])
+```
+
+### 自定义层
+```python
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+# * 构造一个不带参数的层
+class CenteredLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, X):
+        return X - X.mean()
+
+layer = CenteredLayer()
+print(layer(torch.FloatTensor([1, 2, 3, 4, 5])))
+
+# 将层作为组件合并到更复杂的模型中
+net = nn.Sequential(nn.Linear(8, 128), CenteredLayer())
+Y = net(torch.rand(4, 8))
+print(Y.mean()) # 检查均值是否为0
+
+# * 带参数的层
+class MyLinear(nn.Module):
+    def __init__(self, in_units, units): # 输入数和输出数
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(in_units, units))
+        self.bias = nn.Parameter(torch.randn(units,))
+    
+    def forward(self, X):
+        linear = torch.matmul(X, self.weight.data) + self.bias.data
+        return F.relu(linear)
+
+dense = MyLinear(5, 3)
+print(dense.weight)
+
+# 自定义层执行前向传播
+print(dense(torch.rand(2, 5)))
+
+# 自定义层构建模型
+net = nn.Sequential(MyLinear(64, 8), MyLinear(8, 1))
+print(net(torch.rand(2, 64)))
+```
+
+### 读写文件
+```python
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+# * 加载和保存张量
+# 单个张量
+x = torch.arange(4)
+torch.save(x, 'related_data/x-file')
+
+x2 = torch.load('related_data/x-file', weights_only=True)
+print(x2)
+
+# 存储一个张量列表，然后把它们读回内存
+y = torch.zeros(4)
+torch.save([x, y], 'related_data/x-files')
+x2, y2 = torch.load('related_data/x-files', weights_only=True)
+print((x2, y2))
+
+# 写入或读取从字符串映射到张量的字典
+mydict = {'x':x, 'y':y}
+torch.save(mydict, 'related_data/mydict')
+mydict2 = torch.load('related_data/mydict', weights_only=True)
+print(mydict2)
+
+# * 加载和保存模型参数
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.hidden = nn.Linear(20, 256)
+        self.output = nn.Linear(256, 10)
+
+    def forward(self, x):
+        return self.output(F.relu(self.hidden(x)))
+
+net = MLP()
+X = torch.randn(size=(2, 20))
+Y = net(X)
+
+# 存储模型参数
+torch.save(net.state_dict(), 'related_data/mlp.params')
+
+# * 恢复模型
+# 需要先实例化多层感知机模型，再拂去参数
+clone = MLP()
+clone.load_state_dict(torch.load('related_data/mlp.params', weights_only=True))
+print(clone.eval())
+
+Y_clone = clone(X)
+print(Y_clone == Y)
+```
+
+### GPU
+```python
+import torch
+from torch import nn
+
+# * 计算设备
+print(torch.device('cpu'), torch.cuda.device('cuda'), torch.cuda.device('cuda:1'))
+
+# 查询GPU数量
+print(torch.cuda.device_count())
+
+# 请求在GPU不存在的情况下使用CPU运行代码
+def try_gpu(i=0):
+    if torch.cuda.device_count() >= i+1:
+        return torch.device(f'cuda:{i}')
+    return torch.device('cpu')
+
+def try_all_gpus(): # 返回所有可用的GPU
+    devices = [
+        torch.device(f'cuda:{i}') for i in range(torch.cuda.device_count())
+    ]
+    return devices if devices else [torch.device('cpu')]
+
+print(try_gpu(), try_gpu(10), try_all_gpus())
+
+# * 张量与GPU
+# 查询张量所在的设备
+x = torch.tensor([1, 2, 3])
+print(x.device)
+# 存储在GPU上
+x = torch.ones(2, 3, device=try_gpu())
+print(x)
+# 在第二个GPU上创建一个随机张量
+y = torch.rand(2, 3, device=try_gpu(1))
+print(y)
+
+# 复制 
+# 计算x+y，必须要让x和y位于同一个GPU上
+z = x.cuda(1)
+print(x)
+print(z)
+
+# 现在数据在同一个GPU上
+print(y + z)
+print(z.cuda(1) is z) # 变量Z已经存在于第二个GPU上,调用Z.cuda(1)它将返回Z，而不会复制并分配新内存。
+
+# * 神经网络与GPU
+net = nn.Sequential(nn.Linear(3, 1))
+net = net.to(device=try_gpu())
+print(net(x))
+
+# 确认模型参数存储在同一个GPU上
+print(net[0].weight.data.device)
+```
 
 ## Chapter 5 : 卷积神经网络
+### 从全连接层到卷积
+
+### 图像卷积
+
+### 填充和步幅
+
+### 多输入多输出通道
+
+### 汇聚层
+
+### 卷积神经网络(LeNet)
 
 ## Chapter 6 : 现代卷积神经网络
 
