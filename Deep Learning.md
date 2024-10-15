@@ -239,7 +239,7 @@ $ \Vert x + y \Vert \leq \Vert x \Vert + \Vert y \Vert $
 **各种乘法运算的区别**
 |类型|计算方法|示例$ A = \begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix} B = \begin{bmatrix} 5 & 6 \\ 7 & 8 \end{bmatrix}$|
 |-|-|-|
-|*(星乘 asterisk)|矩阵/向量按照对应位置相乘|$ A \ast B = \begin{bmatrix} 1 \cdot 5 & 2 \cdot 6 \\ 3 \cdot 7 & 4 \cdot 8 \end{bmatrix}$|
+|*(星乘 asterisk)哈达玛积|矩阵/向量按照对应位置相乘|$ A \ast B = \begin{bmatrix} 1 \cdot 5 & 2 \cdot 6 \\ 3 \cdot 7 & 4 \cdot 8 \end{bmatrix}$|
 |·(点乘 dot)|矩阵/向量内积 相同位置的按元素乘积的和|$ A \cdot B = \begin{bmatrix} 1\cdot5 + 2\cdot7 & 1\cdot6 + 2\cdot8 \\ 3\cdot5 + 4\cdot7 &3\cdot6+4\cdot8\end{bmatrix}$|
 ```python
 import torch
@@ -323,11 +323,11 @@ print(A / sum_A)
 print(A.cumsum(axis=0))
 print(A.cumsum(axis=1))
 
-# * 点积dot 相同位置的按元素乘积的和
+# * 点积dot 相同位置的按元素乘积的和(先求哈达玛积，再求和)
 y = torch.ones(4, dtype=torch.float32)
 print(x, y, torch.dot(x, y))
 
-# 通过执行按元素乘法，然后求和来表示两个向量的点积
+# 通过执行按元素(哈达玛积)乘法，然后求和来表示两个向量的点积
 print(torch.sum(x * y))
 
 # * 向量积mv Ax 是一个长度为m的列向量，其 i^th 元素是点积 a^T_i x
@@ -1827,16 +1827,219 @@ print(net[0].weight.data.device)
 
 ## Chapter 5 : 卷积神经网络
 ### 从全连接层到卷积
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151019025.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151022337.PNG)
+**权值共享**：对于输入同一张输入图像，用同一个卷积核去提取图像的特征  
+**平移不变性**：对于同一张图及其平移后的图像，都能输出相同的结果(不管检测对象位于图像中那个位置，神经网络的前面几层对相同的图像区域有相似的反应)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151016039.png)
+**空间局限性**：神经网络的前面几层只探索输入图像的局部区域，而不过度在意图像中相隔较远区域的关系
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151017157.png)
+对全连接层使用平移不变性和局部性得到卷积层
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151017888.png)
 
 ### 图像卷积
+**交叉相关**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151024815.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151025769.png)
+**交叉相关&卷积的联系**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151025922.png)
+g(m, n)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151032734.png)
+卷积核
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151033330.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 互相关运算
+def corr2d(X, K): # X输入 K卷积核
+    h, w = K.shape
+    Y = torch.zeros((X.shape[0] - h + 1, X.shape[1] - w + 1)) # 卷积结果大小
+    for i in range(Y.shape[0]):
+        for j in range(Y.shape[1]):
+            Y[i, j] = (X[i:i + h, j:j + w] * K).sum()
+    return Y
+
+# 验证二维互相关运算的输出
+X = torch.tensor([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]])
+K = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+print(corr2d(X, K))
+
+# * 卷积层
+class Conv2D(nn.Module):
+    def __init__(self, kernel_size):
+        super().__init__()
+        self.weight = nn.Parameter(torch.rand(kernel_size))
+        self.bias = nn.Parameter(torch.zeros(1))
+    
+    def forward(self, x):
+        return corr2d(x, self.weight) + self.bias
+
+# * 图像中目标的边缘检测
+X = torch.ones((6, 8))
+X[:, 2:6] = 0
+print(X)
+K = torch.tensor([[1.0, -1.0]])
+
+# 检测结果
+Y = corr2d(X, K)
+print(Y)
+
+# 卷积核K只可以检测垂直边缘
+print(corr2d(X.T, K)) # .t()转置 跟.T 一样
+
+# * 学习卷积核
+conv2d = nn.Conv2d(1, 1, kernel_size=(1, 2), bias=False)
+
+X = X.reshape((1, 1, 6, 8))
+Y = Y.reshape((1, 1, 6, 7))
+
+for i in range(10):
+    Y_hat = conv2d(X)
+    l = (Y_hat - Y ) ** 2 # 损失
+    conv2d.zero_grad()
+    l.sum().backward()
+    conv2d.weight.data[:] -= 3e-2 * conv2d.weight.grad # 梯度下降
+    if (i + 1) % 2 == 0:
+        print(f'batch {i+1}, loss {l.sum():.3f}')
+
+# 学习的权重张量
+print(conv2d.weight.data.reshape((1, 2)))
+```
 
 ### 填充和步幅
+填充
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151634621.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151636571.png)
+如果卷积核尺寸为偶数，上侧填充多一行(向上取整)，下侧填充少一行(向下取整)
+
+步幅
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151642641.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151644455.png)
+```python
+import torch
+from torch import nn
+
+# * 填充
+def comp_conv2d(conv2d, X):
+    X = X.reshape((1, 1) + X.shape) # 元组的连接
+    Y = conv2d(X)
+    return Y.reshape(Y.shape[2:]) # 去掉前两维 只看宽高
+
+# 填充固定高度宽度
+conv2d = nn.Conv2d(1, 1, kernel_size=3, padding=1) # 上下左右各填充1行或1列
+X = torch.rand(size=(8, 8))
+print(comp_conv2d(conv2d, X).shape) # 8-3+1*2+1
+
+# 填充不同的高度和宽度
+conv2d = nn.Conv2d(1, 1, kernel_size=(5, 3), padding=(2, 1))
+print(comp_conv2d(conv2d, X).shape) # (8-5+2*2+1, 8-3+1*2+1)
+
+# * 步幅
+conv2d = nn.Conv2d(1, 1, kernel_size=3, padding=1, stride=2)
+print(comp_conv2d(conv2d, X).shape) # (8-3+1*2+2)/2 向下取整
+
+conv2d = nn.Conv2d(1, 1, kernel_size=(3, 5), padding=(0, 1), stride=(3, 4))
+print(comp_conv2d(conv2d, X).shape) # ((8-3+0*2+3)/3, (8-5+1*2+4)/4) 向下取整
+```
 
 ### 多输入多输出通道
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151718305.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151721888.png)
+> 每个卷积核是i维，总共有o个卷积核，因此输出y的通道数是o
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151731123.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410151733915.png)
+```python
+import torch
+from d2l import torch as d2l
 
-### 汇聚层
+# * 多输入通道
+def corr2d_multi_in(X, K):
+    return sum(d2l.corr2d(x, k) for x, k in zip(X, K)) # 绑定输入x和卷积核
+
+X = torch.tensor([[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]])
+K = torch.tensor([[[0.0, 1.0], [2.0, 3.0]], [[1.0, 2.0], [3.0, 4.0]]])
+
+print(corr2d_multi_in(X, K)) 
+
+# * 多输出通道
+def corr2d_multi_in_out(X, K):
+    return torch.stack([corr2d_multi_in(X, k) for k in K], 0) # stack 沿着轴0进行拼接
+
+K = torch.stack((K, K + 1, K + 2), 0)
+print(K.shape)
+print(corr2d_multi_in_out(X, K))
+
+# * 1 × 1卷积层
+def corr2d_multi_in_out_1x1(X, K):
+    c_i, h, w = X.shape
+    c_o = K.shape[0]
+    X = X.reshape((c_i, h * w))
+    K = K.reshape((c_o, c_i))
+    Y = torch.matmul(K, X) # 相当于全连接层的矩阵乘法
+    return Y.reshape((c_o, h, w))
+
+X = torch.normal(0, 1, (3, 3, 3))
+K = torch.normal(0, 1, (2, 3, 1, 1))
+
+Y1 = corr2d_multi_in_out_1x1(X, K)
+Y2 = corr2d_multi_in_out(X, K)
+assert float(torch.abs(Y1 - Y2).sum()) < 1e-6
+```
+
+### 池化层
+如果有像素1移动位置，则边缘会输出0，卷积输出太敏感会导致检测效果下降
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410152054609.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410152059861.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410152101918.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410152102975.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410152103184.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 最大池化层和平均池化层
+def pool2d(X, pool_size, mode='max'):
+    p_h, p_w = pool_size
+    Y = torch.zeros((X.shape[0] - p_h + 1, X.shape[1] - p_w + 1))
+    for i in range(Y.shape[0]):
+        for j in range(Y.shape[1]):
+            if mode == 'max':
+                Y[i, j] =  X[i:i + p_h, j:j +p_w].max()
+            elif mode == 'avg':
+                Y[i, j] = X[i:i + p_h, j:j + p_w].mean()
+    return Y
+
+# 验证
+X = torch.tensor([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]])
+print(pool2d(X, (2, 2)))
+print(pool2d(X, (2, 2), 'avg'))
+
+# * 填充和步幅
+X = torch.arange(16, dtype=torch.float32).reshape((1, 1, 4, 4))
+pool2d = nn.MaxPool2d(3) # torch框架中步幅与池化窗口大小一致 (4-3+0+3)/3
+
+# 手动设定填充和步幅
+pool2d = nn.MaxPool2d(3, padding=1, stride=2)
+print(pool2d(X)) # (4-3+1*2+2)/2
+
+# 设定任意大小池化窗口
+pool2d = nn.MaxPool2d((2, 3), padding=(1, 1), stride=(2, 3))
+print(pool2d(X)) # ((4-2+1*2+2)/2, (4-3+1*2+3)/3)
+
+# * 多个通道
+X = torch.cat((X, X + 1), 1) # 在channel即第一维度上进行叠加
+print(X)
+
+pool2d = nn.MaxPool2d(3, padding=1, stride=2)
+print(pool2d(X))
+```
 
 ### 卷积神经网络(LeNet)
+
 
 ## Chapter 6 : 现代卷积神经网络
 
