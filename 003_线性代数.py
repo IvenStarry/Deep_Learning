@@ -79,11 +79,11 @@ print(A / sum_A)
 print(A.cumsum(axis=0))
 print(A.cumsum(axis=1))
 
-# * 点积dot 相同位置的按元素乘积的和
+# * 点积dot 相同位置的按元素乘积的和(先求哈达玛积，再求和)
 y = torch.ones(4, dtype=torch.float32)
 print(x, y, torch.dot(x, y))
 
-# 通过执行按元素乘法，然后求和来表示两个向量的点积
+# 通过执行按元素(哈达玛积)乘法，然后求和来表示两个向量的点积
 print(torch.sum(x * y))
 
 # * 向量积mv Ax 是一个长度为m的列向量，其 i^th 元素是点积 a^T_i x
