@@ -1449,6 +1449,8 @@ d2l.plt.waitforbuttonpress()
 ```
 
 ### 数值稳定性和模型初始化
+**神经网络的梯度**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410191451120.png)
 **数值稳定性的两个问题**：
 - **梯度爆炸**
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410101539328.png)
@@ -2145,21 +2147,556 @@ train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
 ```
 
 ## Chapter 6 : 现代卷积神经网络
+### 深度卷积神经网络(AlexNet)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171500171.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171503336.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171504118.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171506751.png)
+数据增强：增加随机光照条件，减少卷积神经网络对于光照的敏感度
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 模型设计
+net = nn.Sequential(
+    nn.Conv2d(1, 96, kernel_size=11, stride=4, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=3, stride=2),
+    nn.Conv2d(96, 256, kernel_size=5, padding=2),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=3, stride=2),
+    nn.Conv2d(256, 384, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.Conv2d(384, 384, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.Conv2d(384, 256, kernel_size=3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(kernel_size=3, stride=2),
+    nn.Flatten(),
+    nn.Linear(6400, 4096),
+    nn.ReLU(),
+    nn.Dropout(p=0.5),
+    nn.Linear(4096, 4096),
+    nn.ReLU(),
+    nn.Dropout(p=0.5),
+    nn.Linear(4096, 10)
+)
+
+# 查看形状
+X = torch.randn(1, 1, 224, 224)
+for layer in net:
+    X = layer(X)
+    print(layer.__class__.__name__, 'Output shape:\t', X.shape)
+
+# * 读取数据集
+batch_size = 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+
+# * 训练
+lr, num_epochs = 0.01, 10
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+
+### 使用块的网络(VGG)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171547816.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171548985.png)
+总结
+- 使用可重复使用的卷积块来构建深度卷积神经网络
+- 不同的卷积块个数和超参数可以得到不同复杂度的变种
+
+```python
+import torch
+from d2l import torch as d2l
+from torch import nn
+
+# * VGG块
+def vgg_block(num_convs, in_channels, out_channels):
+    layers = []
+
+    for _ in range(num_convs):
+        layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
+        layers.append(nn.ReLU())
+        in_channels = out_channels
+    
+    layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+    return nn.Sequential(*layers)
+
+# * VGG网络
+conv_arch = ((1, 64), (1, 128), (2, 256), (2, 512), (2, 512)) # 定义模型卷积层个数和输出的通道数
+def vgg(conv_arch):
+    conv_blks = []
+    in_channels = 1
+    for (num_convs, out_channels) in conv_arch:
+        conv_blks.append(vgg_block(num_convs, in_channels, out_channels))
+        in_channels = out_channels
+    
+    return nn.Sequential(
+        *conv_blks, 
+        nn.Flatten(),
+        nn.Linear(out_channels * 7 * 7, 4096), # 池化5次 224 -> 7
+        nn.ReLU(),
+        nn.Dropout(0.5), 
+        nn.Linear(4096, 4096),
+        nn.ReLU(),
+        nn.Dropout(0.5),
+        nn.Linear(4096, 10)
+    )
+net = vgg(conv_arch)
+
+# 观察输出形状
+X = torch.randn((1, 1, 224, 224))
+for blk in net:
+    X = blk(X)
+    print(blk.__class__.__name__, 'Output shape:\t', X.shape)
+
+# * 训练
+# 因为vgg-11比alexnet计算量更大，因此构建一个通道数少的网络
+ratio = 4
+small_conv_arch = [(pair[0], pair[1] // ratio) for pair in conv_arch]
+net = vgg(small_conv_arch)
+
+# 正式训练
+lr, num_epochs, batch_size = 0.05, 10, 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+
+### 网络中的网络(NiN)
+全连接层所需要的参数太多，占内存以前硬件跟不上，NiN可以减少参数
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171642601.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171642901.png)
+输入通道是1000，对每一个channel做池化，每一个层拿出一个值，做该类别的预测
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171644107.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171650382.png)
+总结：
+- 全连接层占内存
+- 卷积核大占内存
+- 层数越多占内存
+- 模型所占内存越大越难以训练
+- 图像尺寸减半，通道数指数增长，可以很好地保留特征
+- 综上，应多用1*1，3*3卷积核，AdaptiveAvgPool2d代替FC层
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * NiN块
+def nin_block(in_channels, out_channels, kernel_size, strides, padding):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size, strides, padding),
+        nn.ReLU(),
+        nn.Conv2d(out_channels, out_channels, kernel_size=1),
+        nn.ReLU(),
+        nn.Conv2d(out_channels, out_channels, kernel_size=1),
+        nn.ReLU()
+    )
+
+
+# * NiN模型
+net = nn.Sequential(
+    nin_block(1, 96, kernel_size=11, strides=4, padding=0),
+    nn.MaxPool2d(3, stride=2),
+    nin_block(96, 256, kernel_size=5, strides=1, padding=2),
+    nn.MaxPool2d(3, stride=2),
+    nin_block(256, 384, kernel_size=3, strides=1, padding=1),
+    nn.MaxPool2d(3, stride=2),
+    nn.Dropout(0.5),
+    nin_block(384, 10, kernel_size=3, strides=1, padding=1), # 标签类别数是10
+    nn.AdaptiveAvgPool2d((1, 1)), # 全局平均池化层
+    nn.Flatten()) # 将四维的输出转成二维的输出，其形状为(批量大小,10)
+
+# 形状
+X = torch.rand(size=(1, 1, 224, 224))
+for layer in net:
+    X = layer(X)
+    print(layer.__class__.__name__,'output shape:\t', X.shape)
+
+# * 训练模型
+lr, num_epochs, batch_size = 0.1, 10, 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+
+### 含并行连结的网络(GoogLeNet)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171747921.png)
+蓝色框用于提取特征信息，白色框用于改变通道数
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171748081.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171809748.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171813095.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171814611.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171815725.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171816075.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171818685.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171818284.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171819166.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410171826042.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+from torch.nn import functional as F
+
+# * Inception块
+class Inception(nn.Module):
+    def __init__(self, in_channels, c1, c2, c3, c4, **kwargs):
+        super(Inception, self).__init__(**kwargs)
+        self.p1_1 = nn.Conv2d(in_channels, c1, kernel_size=1)
+        self.p2_1 = nn.Conv2d(in_channels, c2[0], kernel_size=1)
+        self.p2_2 = nn.Conv2d(c2[0], c2[1], kernel_size=3, padding=1)
+        self.p3_1 = nn.Conv2d(in_channels, c3[0], kernel_size=1)
+        self.p3_2 = nn.Conv2d(c3[0], c3[1], kernel_size=5, padding=2)
+        self.p4_1 = nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self.p4_2 = nn.Conv2d(in_channels, c4, kernel_size=1)
+    
+    def forward(self, x): # 不同路径的前向通路
+        p1 = F.relu(self.p1_1(x))
+        p2 = F.relu(self.p2_2(F.relu(self.p2_1(x))))
+        p3 = F.relu(self.p3_2(F.relu(self.p3_1(x))))
+        p4 = F.relu(self.p4_2(self.p4_1(x)))
+        return torch.cat((p1, p2, p3, p4), dim=1) # 在通道数上这一维度进行连接
+
+# * GoogLeNet模型
+b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+                    nn.ReLU(),
+                    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+
+b2 = nn.Sequential(nn.Conv2d(64, 64, kernel_size=1),
+                    nn.ReLU(),
+                    nn.Conv2d(64, 192, kernel_size=3, padding=1),
+                    nn.ReLU(),
+                    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+
+b3 = nn.Sequential(Inception(192, 64, (96, 128), (16, 32), 32),
+                    Inception(256, 128, (128, 192), (32, 96), 64),
+                    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+
+b4 = nn.Sequential(Inception(480, 192, (96, 208), (16, 48), 64),
+                    Inception(512, 160, (112, 224), (24, 64), 64),
+                    Inception(512, 128, (128, 256), (24, 64), 64),
+                    Inception(512, 112, (144, 288), (32, 64), 64),
+                    Inception(528, 256, (160, 320), (32, 128), 128),
+                    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+
+b5 = nn.Sequential(Inception(832, 256, (160, 320), (32, 128), 128),
+                    Inception(832, 384, (192, 384), (48, 128), 128),
+                    nn.AdaptiveAvgPool2d((1,1)),
+                    nn.Flatten())
+
+net = nn.Sequential(b1, b2, b3, b4, b5, nn.Linear(1024, 10))
+
+# 形状
+X = torch.rand(size=(1, 1, 96, 96))
+for layer in net:
+    X = layer(X)
+    print(layer.__class__.__name__,'output shape:\t', X.shape)
+
+# * 训练模型
+lr, num_epochs, batch_size = 0.1, 10, 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=96)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+d2l.plt.waitforbuttonpress()
+```
+
+### 批量归一化
+若使用Sigmoid激活函数且上一层的输出值较大，会导致这一层梯度较小，梯度在上层(靠近损失)比较大，到下层(靠近数据)比较小(可以看梯度消失的推导)，上层收敛块，下层收敛慢  
+下层会抽取、学习一些底层的特征(局部边缘，简单纹理)，上层学习高层语义信息，如果底层信息发生改变会告知上层的权重白学了，我们希望在学习下层时避免变化顶部
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410191514248.png)
+假设将分布固定，每一层的输出、梯度都符合某一分布，那么计算梯度会相对稳定，参数更新更加平缓，学习细微的变动也更加容易
+
+**批量归一化**：将不同层的不同位置的小批量(mini-batch)输出的均值和方差固定
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410191516488.png)
+参数：
+- $B$:小批量 
+- $\epsilon$:方差的估计值中有一个小的常量epsilon > 0，为了保证归一化时除数除数不为0(第二行)
+- $\gamma$、$\beta$:拉伸参数与偏移参数，可以学习的参数，若当前数值分布不合理，对它们进行限制可以学习得到新的均值和方差，使得数值更加稳定，避免数值变化剧烈
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410191614149.png)
+**对全连接层**：输入是二维，每一行是样本，每一列是特征，对每一个特征(每一列)，计算一个标量的均值和方差
+**对于卷积层**：每一个像素有多个通道，通道展开可以看做一个向量，这个向量就是这个像素的特征，每一个像素是一个样本，样本数是batch_size\*height\*width，特征是channels
+
+**内部协变量转移**：变量值的分布在训练过程中会发生变化
+**随机偏移、随机缩放**：因为每一个小批量都是随机的，所以$\hat{\mu}_B$和$\hat{\sigma}_B$是随机的  
+PS：因为加入了噪音，因此可以说它控制了模型的复杂度，由于丢弃法也控制了模型复杂度，因此没有必要跟丢弃法混合使用(类似于数据增强)
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410191640833.png)
+
+**指数加权平均**
+- 背景原因：
+    - 测试集和训练集的样本分布不一样，使用测试集的均值和方差传入模型，可能得到的结果不太好
+    - 测试集可能只有一个样本无法计算均值和标准差
+    - 因此需要保存并使用训练过程中的结果来对测试集数据进行归一化
+
+- 解决办法：
+这里我们使用***指数加权平均***的方法，先初始化全局均值和方差，再根据每一个batch的均值和方差对全局方差进行更新，更新内容包括*当前batch的均值和方差*并保留*一部分的历史值*，避免出现异常分布，更新方法类似于参数梯度下降算法
+
+- 公式：
+    - $moving\_mean = momentum * moving\_mean + (1.0 -momentum) * mean$
+    - $moving\_var = momentum * moving\_var + (1.0 -momentum) * var$
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 从零实现批量归一化层
+def batch_norm(X, gamma, beta, moving_mean, moving_var, eps, momentum): # moving_mean\var 全局均值\方差
+    if not torch.is_grad_enabled(): # 当不算梯度的时候(推理)
+        X_hat = (X - moving_mean) / torch.sqrt(moving_var + eps) # 在测试模型的时候，不需要更新参数，直接将输入通过前向传播得到输出
+    else:
+        assert len(X.shape) in (2, 4) # 确保输入形状为2(全连接层)或者4(卷积层)
+        if len(X.shape) == 2:
+            mean = X.mean(dim=0) # 全连接层计算每一列的均值
+            var = ((X - mean) ** 2).mean(dim=0)
+        else:
+            mean = X.mean(dim=(0, 2, 3), keepdim=True)
+            var = ((X - mean) ** 2).mean(dim=(0, 2, 3), keepdim=True)
+        X_hat = (X - mean) / torch.sqrt(var + eps) # 每个批量的方差
+
+        '''
+        在训练过程中，数据的分布可能会随着模型的学习不断变化（小批量数据的随机性，参数更新，非线性激活函数）。
+        通过不断更新移动平均的均值和方差，可以动态地跟踪数据分布的变化趋势。
+        在预测阶段，面对新的数据，可以使用相对稳定的均值和方差进行归一化处理，使得模型在不同的数据上表现更加稳定。
+        '''
+        moving_mean = momentum * moving_mean + (1.0 - momentum) * mean # 全局均值的更新
+        moving_var = momentum * moving_var + (1.0 - momentum) * var
+    Y = gamma * X_hat + beta
+    return Y, moving_mean.data, moving_var.data
+
+# 创建一个正确的BatchNorm图层
+class BatchNorm(nn.Module):
+    def __init__(self, num_features, num_dims):
+        super().__init__()
+        if num_dims == 2:
+            shape = (1, num_features)
+        else:
+            shape = (1, num_features, 1, 1)
+        # 参与求梯度和迭代的拉伸和偏移参数，分别初始化成1和0
+        self.gamma = nn.Parameter(torch.ones(shape)) # 有Parameter会自动移动到相应device
+        self.beta = nn.Parameter(torch.zeros(shape))
+        # 非模型参数的变量初始化为0和1
+        self.moving_mean = torch.zeros(shape) # 均值为0 没有Parameter储存在内存CPU
+        self.moving_var = torch.ones(shape) # 方差为1
+
+    def forward(self, X):# 当输入X不在内存上将moving_mean/var复制到显存
+        if self.moving_mean.device != X.device:
+            self.moving_mean = self.moving_mean.to(X.device)
+            self.moving_var = self.moving_var.to(X.device)
+        Y, self.moving_mean, self.moving_var = batch_norm(X, self.gamma, self.beta, self.moving_mean, self.moving_var, eps=1e-5, momentum=0.9)
+        return Y
+
+# * 使用批量归一化层的LeNet
+net = nn.Sequential(
+    nn.Conv2d(1, 6, kernel_size=5), 
+    BatchNorm(6, num_dims=4), 
+    nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2),
+
+    nn.Conv2d(6, 16, kernel_size=5), 
+    BatchNorm(16, num_dims=4), 
+    nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2), 
+
+    nn.Flatten(),
+    nn.Linear(16*4*4, 120), 
+    BatchNorm(120, num_dims=2), 
+    nn.Sigmoid(),
+
+    nn.Linear(120, 84), 
+    BatchNorm(84, num_dims=2), 
+    nn.Sigmoid(),
+
+    nn.Linear(84, 10)
+)
+
+lr, num_epochs, batch_size = 1.0, 10, 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+print(net[1].gamma.reshape((-1,)), net[1].beta.reshape((-1,)))
+
+# * 简洁实现
+net = nn.Sequential(
+    nn.Conv2d(1, 6, kernel_size=5), 
+    nn.BatchNorm2d(6), 
+    nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2),
+
+    nn.Conv2d(6, 16, kernel_size=5), 
+    nn.BatchNorm2d(16),
+    nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2), 
+    
+    nn.Flatten(),
+    nn.Linear(256, 120), 
+    nn.BatchNorm1d(120), 
+    nn.Sigmoid(),
+
+    nn.Linear(120, 84), 
+    nn.BatchNorm1d(84), 
+    nn.Sigmoid(),
+    nn.Linear(84, 10))
+
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+
+### 残差网络(ResNet)
+```python
+
+```
+
+### 稠密连接网络(DenseNet)
+```python
+
+```
+
 
 ## Chapter 7 : 循环神经网络
+### 序列模型
+
+### 文本预处理
+
+### 语言模型和数据集
+
+### 循环神经网络
+
+### 循环神经网络的从零开始实现
+
+### 循环神经网络的简洁实现
+
+### 通过时间反向传播
 
 ## Chapter 8 : 现代循环神经网络
+### 门控循环单元(GRU)
+
+### 长短期记忆网络(LSTM)
+
+### 深度循环神经网络
+
+### 双向循环神经网络
+
+### 机器翻译与数据集
+
+### 序列到序列学习(seq2seq)
+
+### 束搜索
 
 ## Chapter 9 : 注意力机制
+### 注意力提示
+
+### 注意力汇聚：Nadaraya-Watson核回归
+
+### 注意力评分
+
+### Bahdanau 注意力
+
+### 多头注意力
+
+### 自注意力和位置编码
+
+### Transformer
 
 ## Chapter 10 : 优化算法
+### 优化和深度学习
+
+### 凸性
+
+### 梯度下降
+
+### 随机梯度下降
+
+### 小批量随机梯度下降
+
+### 动量法
+
+### AdaGrad算法
+
+### RMSProp算法
+
+### Adadelta
+
+### Adam算法
+
+### 学习率调度器
 
 ## Chapter 11 : 计算性能
+### 编译器和解释器
+
+### 异步计算
+
+### 自动并行
+
+### 硬件
+
+### 多GPU训练
+
+### 多GPU的简洁实现
+
+### 参数服务器
 
 ## Chapter 12 : 计算机视觉
+### 图像增广
+
+### 微调
+
+### 目标检测和边界框
+
+### 锚框
+
+### 多尺度目标检测
+
+### 目标检测数据集
+
+### 单发多框检测(SSD)
+
+### 区域卷积神经网络(R-CNN)系列
+
+### 语义分割和数据集
+
+### 转置卷积
+
+### 全卷积网络
+
+### 风格迁移
+
+### 实战Kaggle比赛：图像分类(CIFAR-10)
+
+### 实战Kaggle比赛：狗的品种识别(ImageNet Dogs)
 
 ## Chapter 13 : 自然语言处理: 预训练
+### 词嵌入(word2vec)
+
+### 近似训练
+
+### 用于与训练词嵌入的数据集
+
+### 预训练word2vec
+
+### 全局向量的词嵌入(GloVe)
+
+### 子词嵌入
+
+### 词的相似性和类比任务
+
+### 来自Transformers的双向编码器表示(BERT)
+
+### 用于预训练BERT的数据集
+
+### 预训练BERT
 
 ## Chapter 14 : 自然语言处理: 应用
+### 情感分析及数据集
+
+### 情感分析：使用循环神经网络
+
+### 情感分析：使用卷积神经网络
+
+### 自然语言推断与数据集
+
+### 自然语言推断：使用注意力
+
+### 针对序列级和词元级应用微调BERT
+
+### 自然语言推断：微调BERT
 
 ## Chapter 15 : 深度学习工具
