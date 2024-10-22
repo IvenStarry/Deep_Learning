@@ -56,6 +56,8 @@ def train(net, num_gpus, batch_size, lr):
         timer.start()
         for X, y in train_iter:
             trainer.zero_grad()
+            # 网络被Dataparallel“包装”后，在前向过程会把输入tensor自动分配到每个显卡上。
+            # 而Dataparallel使用的是master-slave的数据并行模式，主卡默认为0号GPU，所以在进网络之前，只要移到GPU[0]就可以了
             X, y = X.to(devices[0]), y.to(devices[0])
             l = loss(net(X), y)
             l.backward()
