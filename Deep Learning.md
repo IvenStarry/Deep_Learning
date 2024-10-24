@@ -2917,6 +2917,9 @@ train(net, num_gpus=2, batch_size=512, lr=0.2)
 ```
 
 ### 参数服务器
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410241027613.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410241029422.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410241029026.png)
 
 ## Chapter 12 : 计算机视觉
 ### 图像增广
@@ -2983,4 +2986,3 @@ train(net, num_gpus=2, batch_size=512, lr=0.2)
 
 ### 自然语言推断：微调BERT
 
-## Chapter 15 : 深度学习工具
