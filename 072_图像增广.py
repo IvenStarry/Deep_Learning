@@ -1,5 +1,6 @@
 import torch
 import torch.utils
+import torch.utils.data
 import torchvision
 from torch import nn
 from d2l import torch as d2l
@@ -58,7 +59,8 @@ test_augs = torchvision.transforms.ToTensor()
 # 定义辅助函数，便于读取图像和应用图像增广
 def load_cifar10(is_train, augs, batch_size):
     dataset = torchvision.datasets.CIFAR10(root='./related_data', train=is_train, transform=augs, download=True)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, 
+                                            shuffle=is_train, num_wprker=d2l.get_dataloader_workers)
     return dataloader
 
 # * 多GPU训练
@@ -109,11 +111,11 @@ def init_weights(m):
         nn.init.xavier_uniform_(m.weight)
 net.apply(init_weights)
 
-def train_with_data_dug(train_augs, test_augs, net, lr=0.001):
+def train_with_data_aug(train_augs, test_augs, net, lr=0.001):
     train_iter = load_cifar10(True, train_augs, batch_size)
     test_iter = load_cifar10(False, test_augs, batch_size)
     loss = nn.CrossEntropyLoss(reduction='none')
     trainer = torch.optim.Adam(net.parameters(), lr=lr)
     train_ch13(net, train_iter, test_iter, loss, trainer, 10, devices)
 
-train_with_data_dug(train_augs, test_augs, net)
+train_with_data_aug(train_augs, test_augs, net)
