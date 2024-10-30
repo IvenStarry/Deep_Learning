@@ -3149,12 +3149,26 @@ train_fine_tuning(scratch_net, 5e-4, param_group=False)
 ```
 
 ### 目标检测和边界框
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410302053963.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410302056829.png)
+```python
+
+```
 
 ### 锚框
+```python
+
+```
 
 ### 多尺度目标检测
+```python
+
+```
 
 ### 目标检测数据集
+```python
+
+```
 
 ### 单发多框检测(SSD)
 
