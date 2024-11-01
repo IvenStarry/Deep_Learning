@@ -260,6 +260,8 @@ def multibox_target(anchors, labels):
     bbox_offset = torch.stack(batch_offset)
     bbox_mask = torch.stack(batch_mask)
     class_labels = torch.stack(batch_class_labels)
+
+    # 返回锚框与真实框的偏移，锚框是否为背景，对应的类别标号
     return (bbox_offset, bbox_mask, class_labels)
 
 ground_truth = torch.tensor([[0, 0.1, 0.08, 0.52, 0.92],
