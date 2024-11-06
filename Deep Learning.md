@@ -3723,7 +3723,236 @@ SSD的实现思路：
 4. 计算上述二者的差异损失，更新权重参数
 
 ```python
+import torch
+import torchvision
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
 
+# * 模型
+# 类别预测层 预测锚框类别
+# 目标是n类，锚框总共有n+1个类别，其中0类是背景
+def cls_predictor(num_inputs, num_anchors, num_classes): # 输入图像输入尺寸，锚框个数，目标类别个数
+    # 返回num_anchors * (num_classes + 1) 对应每一个锚框对每一种类别的预测值
+    # 此卷积层的输入和输出的宽度和高度保持不变 类似于卷积层只是参数更加少
+    return nn.Conv2d(num_inputs, num_anchors * (num_classes + 1), kernel_size=3, padding=1)
+
+# 边界框预测层 预测锚框与真实框的偏移
+def bbox_predictor(num_inputs, num_anchors):
+    # 返回num_anchors * 4 给每个锚框预测4个偏移量
+    return nn.Conv2d(num_inputs, num_anchors * 4, kernel_size=3, padding=1)
+
+# 连接多尺度的预测
+def forward(x, block):
+    return block(x)
+
+# 生成2个特征图 高宽是20 每个中心点生成5个锚框 类别是10
+Y1 = forward(torch.zeros((2, 8, 20, 20)), cls_predictor(8, 5, 10))
+Y2 = forward(torch.zeros((2, 16, 10, 10)), cls_predictor(16, 3, 10))
+print(Y1.shape, Y2.shape)
+# (torch.Size([2, 55, 20, 20]) 第一个尺度每一个像素点生成55个预测值 11*5 总共20*20个像素点
+# torch.Size([2, 33, 10, 10])) 第二个尺度每一个像素点生成335个预测值 11*3 总共10*10个像素点
+
+# 连接除了批量大小以外的所有参数
+def flatten_pred(pred):
+    # 先把通道数放在最后，把每个像素的每个锚框预测的类别放在一起
+    # 从第一个维度开始执行展平操作，shape变为（批量大小，高*宽*通道数）
+    return torch.flatten(pred.permute(0, 2, 3, 1), start_dim=1)
+
+# 连接不同尺度下的框
+def concat_preds(preds):
+    return torch.cat([flatten_pred(p) for p in preds], dim=1)
+
+# 尽管Y1和Y2在通道数、高度和宽度方面具有不同的大小，我们仍然可以在同一个小批量的两个不同尺度上连接这两个预测输出
+print(concat_preds([Y1, Y2]).shape)
+
+# 高和宽减半块 下采样块 变换通道数
+def down_sample_blk(in_channels, out_channels):
+    blk = []
+    for _ in range(2):
+        blk.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
+        blk.append(nn.BatchNorm2d(out_channels))
+        blk.append(nn.ReLU())
+        in_channels = out_channels
+    blk.append(nn.MaxPool2d(2))
+    return nn.Sequential(*blk)
+print(forward(torch.zeros((2, 3, 20, 20)), down_sample_blk(3, 10)).shape)
+
+# 基本网络块
+def base_net():
+    blk = []
+    # 通道数从3开始，再到16，再到32，再到64 同时高宽也减半三次
+    num_filters = [3, 16, 32, 64]
+    for i in range(len(num_filters) - 1):
+        blk.append(down_sample_blk(num_filters[i], num_filters[i+1]))
+    return nn.Sequential(*blk)
+print(forward(torch.zeros((2, 3, 256, 256)), base_net()).shape)
+
+# 完整的模型 五个模块构成
+def get_blk(i):
+    if i == 0:
+        blk = base_net()
+    elif i == 1:
+        blk = down_sample_blk(64, 128)
+    elif i == 4:
+        # 将高度和宽度压到1
+        blk = nn.AdaptiveMaxPool2d((1,1))
+    else:
+        blk = down_sample_blk(128, 128)
+    return blk
+
+# 给每一个块定义前向计算
+def blk_forward(X, blk, size, ratio, cls_predictor, bbox_predictor):
+    # 生成当前fmap的卷积层输出
+    Y = blk(X)
+    # 生成当前fmap的锚框
+    anchors = d2l.multibox_prior(Y, sizes=size, ratios=ratio)
+    # 生成类别和偏移预测
+    cls_preds = cls_predictor(Y)
+    bbox_preds = bbox_predictor(Y)
+    return (Y, anchors, cls_preds, bbox_preds)
+
+# 超参数
+# 最下层就是fmap尺寸较大的用小的锚框，后面锚框尺寸越来越大
+sizes = [[0.2, 0.272], [0.37, 0.447], [0.54, 0.619], [0.71, 0.79], [0.88, 0.961]]
+ratios = [[1, 2, 0.5]] * 5
+num_anchors = len(sizes[0]) + len(ratios[0]) - 1
+
+class TinySSD(nn.Module):
+    def __init__(self, num_classes, **kwargs):
+        super(TinySSD, self).__init__(**kwargs)
+        self.num_classes = num_classes
+        # 每个Stage输出通道数
+        idx_to_in_channels = [64, 128, 128, 128, 128]
+        # 做五次预测
+        for i in range(5):
+            # setattr 即赋值语句self.blk_i=get_blk(i)
+            setattr(self, f'blk_{i}', get_blk(i))
+            setattr(self, f'cls_{i}', cls_predictor(idx_to_in_channels[i],
+                                                    num_anchors, num_classes))
+            setattr(self, f'bbox_{i}', bbox_predictor(idx_to_in_channels[i],
+                                                      num_anchors))
+
+    def forward(self, X):
+        anchors, cls_preds, bbox_preds = [None] * 5, [None] * 5, [None] * 5
+        for i in range(5):
+            # getattr(self,'blk_%d'%i)即访问self.blk_i
+            X, anchors[i], cls_preds[i], bbox_preds[i] = blk_forward(
+                X, getattr(self, f'blk_{i}'), sizes[i], ratios[i],
+                getattr(self, f'cls_{i}'), getattr(self, f'bbox_{i}'))
+        anchors = torch.cat(anchors, dim=1)
+        cls_preds = concat_preds(cls_preds)
+        # 把类别作为最后一维拿出来 方便预测
+        cls_preds = cls_preds.reshape(
+            cls_preds.shape[0], -1, self.num_classes + 1)
+        bbox_preds = concat_preds(bbox_preds)
+        return anchors, cls_preds, bbox_preds
+
+net = TinySSD(num_classes=1)
+X = torch.zeros((32, 3, 256, 256))
+anchors, cls_preds, bbox_preds = net(X)
+
+print('output anchors:', anchors.shape) # 所有stage每个像素每个anchor之和
+print('output class preds:', cls_preds.shape) # 32 batchsize 2 类别加1 
+print('output bbox preds:', bbox_preds.shape) # anchor*4 每个锚框与真实框的偏移
+
+# * 训练模型
+# 读取数据集
+batch_size = 32
+train_iter, _ = d2l.load_data_bananas(batch_size)
+
+# 初始化参数
+device, net = d2l.try_gpu(), TinySSD(num_classes=1)
+trainer = torch.optim.SGD(net.parameters(), lr=0.2, weight_decay=5e-4)
+
+# 定义损失函数和评价函数
+cls_loss = nn.CrossEntropyLoss(reduction='none') # 类别损失
+bbox_loss = nn.L1Loss(reduction='none') # 偏移损失 选择L1的原因：如果预测与真实差距特别大，不会返回一个特别大的损失
+
+def calc_loss(cls_preds, cls_labels, bbox_preds, bbox_labels, bbox_masks):
+    batch_size, num_classes = cls_preds.shape[0], cls_preds.shape[2]
+    cls = cls_loss(cls_preds.reshape(-1, num_classes),
+                   cls_labels.reshape(-1)).reshape(batch_size, -1).mean(dim=1)
+    bbox = bbox_loss(bbox_preds * bbox_masks,
+                     bbox_labels * bbox_masks).mean(dim=1) # mask标注了背景框和非背景框
+    return cls + bbox
+
+def cls_eval(cls_preds, cls_labels):
+    # 由于类别预测结果放在最后一维，argmax需要指定最后一维。
+    return float((cls_preds.argmax(dim=-1).type(
+        cls_labels.dtype) == cls_labels).sum())
+
+def bbox_eval(bbox_preds, bbox_labels, bbox_masks):
+    return float((torch.abs((bbox_labels - bbox_preds) * bbox_masks)).sum())
+
+# 正式训练
+num_epochs, timer = 20, d2l.Timer()
+animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs],
+                        legend=['class error', 'bbox mae'])
+net = net.to(device)
+for epoch in range(num_epochs):
+    # 训练精确度的和，训练精确度的和中的示例数
+    # 绝对误差的和，绝对误差的和中的示例数
+    metric = d2l.Accumulator(4)
+    net.train()
+    for features, target in train_iter:
+        timer.start()
+        trainer.zero_grad()
+        X, Y = features.to(device), target.to(device)
+        # 生成多尺度的锚框，为每个锚框预测类别和偏移量
+        anchors, cls_preds, bbox_preds = net(X)
+        # 为每个锚框标注类别和偏移量
+        bbox_labels, bbox_masks, cls_labels = d2l.multibox_target(anchors, Y)
+        # 根据类别和偏移量的预测和标注值计算损失函数
+        l = calc_loss(cls_preds, cls_labels, bbox_preds, bbox_labels,
+                      bbox_masks)
+        l.mean().backward()
+        trainer.step()
+        metric.add(cls_eval(cls_preds, cls_labels), cls_labels.numel(),
+                   bbox_eval(bbox_preds, bbox_labels, bbox_masks),
+                   bbox_labels.numel())
+    cls_err, bbox_mae = 1 - metric[0] / metric[1], metric[2] / metric[3]
+    animator.add(epoch + 1, (cls_err, bbox_mae))
+print(f'class err {cls_err:.2e}, bbox mae {bbox_mae:.2e}')
+print(f'{len(train_iter.dataset) / timer.stop():.1f} examples/sec on '
+      f'{str(device)}')
+
+# 保存参数
+torch.save(net.state_dict(), 'related_data/SSD.pth')
+print("Model parameters saved to SSD.pth")
+
+# * 预测目标
+X = torchvision.io.read_image('related_data/banana.jpeg').unsqueeze(0).float()
+img = X.squeeze(0).permute(1, 2, 0).long()
+
+# Load model parameters before testing
+net_load = TinySSD(num_classes=1).to(device)  # Make sure to initialize the model first
+net_load.load_state_dict(torch.load('related_data/SSD.pth'))
+print("Model parameters loaded from SSD.pth")
+
+def predict(X):
+    net_load.eval()
+    anchors, cls_preds, bbox_preds = net_load(X.to(device))
+    cls_probs = F.softmax(cls_preds, dim=2).permute(0, 2, 1)
+    output = d2l.multibox_detection(cls_probs, bbox_preds, anchors)
+    idx = [i for i, row in enumerate(output[0]) if row[0] != -1]
+    return output[0, idx]
+
+output = predict(X)
+
+def display(img, output, threshold):
+    d2l.set_figsize((5, 5))
+    fig = d2l.plt.imshow(img)
+    for row in output:
+        score = float(row[1])
+        if score < threshold:
+            continue
+        h, w = img.shape[0:2]
+        bbox = [row[2:6] * torch.tensor((w, h, w, h), device=row.device)]
+        d2l.show_bboxes(fig.axes, bbox, '%.2f' % score, 'w')
+    d2l.plt.show()
+
+display(img, output.cpu(), threshold=0.9)
 ```
 
 ### 区域卷积神经网络(R-CNN)系列
@@ -3775,8 +4004,236 @@ R-CNN 每次拿到一张图片都需要抽取特征，如果说一张图片中�
 - Faster R-CNN 和 Mask R-CNN 是在追求高精度场景下的常用算法（Mask R-CNN 需要有像素级别的标号，所以相对来讲局限性会大一点，在无人车领域使用的比较多）
 
 ### 语义分割和数据集
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411061555132.png)
+语义分割的应用场景：  背景虚化
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411061556631.png)
+```python
+import os
+import torch
+import torchvision
+from d2l import torch as d2l
+
+# * Pascal VOC2012 语义分割数据集
+d2l.DATA_HUB['voc2012'] = (d2l.DATA_URL + 'VOCtrainval_11-May-2012.tar',
+                           '4e443f8a2eca6b1dac8a6c57641b67dd40621a49')
+
+voc_dir = d2l.download_extract('voc2012', 'VOCdevkit/VOC2012')
+
+def read_voc_images(voc_dir, is_train=True):
+    """读取所有VOC图像并标注"""
+    txt_fname = os.path.join(voc_dir, 'ImageSets', 'Segmentation',
+                             'train.txt' if is_train else 'val.txt')
+    mode = torchvision.io.image.ImageReadMode.RGB
+    with open(txt_fname, 'r') as f:
+        images = f.read().split()
+    features, labels = [], []
+    for i, fname in enumerate(images):
+        features.append(torchvision.io.read_image(os.path.join(
+            voc_dir, 'JPEGImages', f'{fname}.jpg')))
+        labels.append(torchvision.io.read_image(os.path.join(
+            voc_dir, 'SegmentationClass' ,f'{fname}.png'), mode))
+    return features, labels
+
+train_features, train_labels = read_voc_images(voc_dir, True)
+
+# 绘制前五个输入图像和标签
+# 在标签图像中，白色和黑色分别表示边框和背景，而其他颜色则对应不同的类别
+n = 5
+imgs = train_features[0:n] + train_labels[0:n]
+imgs = [img.permute(1,2,0) for img in imgs]
+d2l.show_images(imgs, 2, n)
+d2l.plt.show()
+
+# 列举RGB颜色值和类名
+VOC_COLORMAP = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+                [0, 0, 128], [128, 0, 128], [0, 128, 128], [128, 128, 128],
+                [64, 0, 0], [192, 0, 0], [64, 128, 0], [192, 128, 0],
+                [64, 0, 128], [192, 0, 128], [64, 128, 128], [192, 128, 128],
+                [0, 64, 0], [128, 64, 0], [0, 192, 0], [128, 192, 0],
+                [0, 64, 128]]
+
+VOC_CLASSES = ['background', 'aeroplane', 'bicycle', 'bird', 'boat',
+               'bottle', 'bus', 'car', 'cat', 'chair', 'cow',
+               'diningtable', 'dog', 'horse', 'motorbike', 'person',
+               'potted plant', 'sheep', 'sofa', 'train', 'tv/monitor']
+
+# 每个像素的索引
+def voc_colormap2label():
+    """构建从RGB到VOC类别索引的映射"""
+    colormap2label = torch.zeros(256 ** 3, dtype=torch.long)
+    for i, colormap in enumerate(VOC_COLORMAP):
+        colormap2label[
+            (colormap[0] * 256 + colormap[1]) * 256 + colormap[2]] = i
+    return colormap2label
+
+def voc_label_indices(colormap, colormap2label):
+    """将VOC标签中的RGB值映射到它们的类别索引"""
+    colormap = colormap.permute(1, 2, 0).numpy().astype('int32')
+    idx = ((colormap[:, :, 0] * 256 + colormap[:, :, 1]) * 256
+           + colormap[:, :, 2])
+    return colormap2label[idx]
+
+y = voc_label_indices(train_labels[0], voc_colormap2label())
+print(y[105:115, 130:140], VOC_CLASSES[1])
+
+# 预处理
+def voc_rand_crop(feature, label, height, width):
+    """随机裁剪特征和标签图像 保证随机裁剪后图像和标签一一对应"""
+    rect = torchvision.transforms.RandomCrop.get_params(feature, (height, width)) # 返回裁剪的框
+    feature = torchvision.transforms.functional.crop(feature, *rect)
+    label = torchvision.transforms.functional.crop(label, *rect)
+    return feature, label
+
+imgs = []
+for _ in range(n):
+    imgs += voc_rand_crop(train_features[0], train_labels[0], 200, 300)
+
+imgs = [img.permute(1, 2, 0) for img in imgs]
+d2l.show_images(imgs[::2] + imgs[1::2], 2, n)
+d2l.plt.show()
+
+# 自定义语义分割数据集类
+class VOCSegDataset(torch.utils.data.Dataset):
+    """一个用于加载VOC数据集的自定义数据集"""
+
+    def __init__(self, is_train, crop_size, voc_dir):
+        self.transform = torchvision.transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.crop_size = crop_size
+        features, labels = read_voc_images(voc_dir, is_train=is_train)
+        self.features = [self.normalize_image(feature)
+                         for feature in self.filter(features)]
+        self.labels = self.filter(labels)
+        self.colormap2label = voc_colormap2label()
+        print('read ' + str(len(self.features)) + ' examples')
+
+    def normalize_image(self, img):
+        return self.transform(img.float() / 255)
+    
+    # 假设图片比crop_size还要小，直接舍弃 
+    def filter(self, imgs):
+        return [img for img in imgs if (
+            img.shape[1] >= self.crop_size[0] and
+            img.shape[2] >= self.crop_size[1])]
+
+    # 使用索引方法 返回经过randomcrop的图像
+    def __getitem__(self, idx):
+        feature, label = voc_rand_crop(self.features[idx], self.labels[idx],
+                                       *self.crop_size)
+        return (feature, voc_label_indices(label, self.colormap2label))
+
+    def __len__(self):
+        return len(self.features)
+
+crop_size = (320, 480)
+voc_train = VOCSegDataset(True, crop_size, voc_dir)
+voc_test = VOCSegDataset(False, crop_size, voc_dir)
+
+batch_size = 64
+train_iter = torch.utils.data.DataLoader(voc_train, batch_size, shuffle=True,
+                                    drop_last=True,
+                                    num_workers=d2l.get_dataloader_workers())
+for X, Y in train_iter:
+    print(X.shape) # 
+    print(Y.shape) # 每个像素的类别序号
+    break
+
+# 整合
+def load_data_voc(batch_size, crop_size):
+    """加载VOC语义分割数据集"""
+    voc_dir = d2l.download_extract('voc2012', os.path.join(
+        'VOCdevkit', 'VOC2012'))
+    num_workers = d2l.get_dataloader_workers()
+    train_iter = torch.utils.data.DataLoader(
+        VOCSegDataset(True, crop_size, voc_dir), batch_size,
+        shuffle=True, drop_last=True, num_workers=num_workers)
+    test_iter = torch.utils.data.DataLoader(
+        VOCSegDataset(False, crop_size, voc_dir), batch_size,
+        drop_last=True, num_workers=num_workers)
+    return train_iter, test_iter
+```
 
 ### 转置卷积
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411061819463.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411061823426.png)
+**转置称谓的来源**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062012804.jpg)
+1. 对于卷积 Y = X * W
+    - " * "代表卷积
+    - 可以对 W 构造一个 V （V 是一个比较大的向量），使得卷积等价于矩阵乘法 Y‘ = VX’
+    - 这里的 Y‘， X’ 是 Y， X 对应的向量版本（将 Y， X 通过逐行连结拉成向量）
+    - 如果 X’ 是一个长为 m 的向量，Y‘ 是一个长为 n 的向量，则 V 就是一个 n×m 的矩阵
+2. 转置卷积同样可以对 W 构造一个 V ，则等价于 Y‘ = VTX'
+   - 按照上面的假设 VT 就是一个  m×n ，则 X’ 就是一个长为 n 的向量，Y‘ 就是一个长为 m 的向量，X 和 Y 的向量发生了交换
+   - 从 V 变成了 VT 所以叫做转置卷积
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062205126.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062209663.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062211993.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062217366.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062215405.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411062216306.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 基本操作
+#  以步幅为1滑动卷积核窗口，结果是一个(nh+kh-1,nw +hw-1)的张量
+def trans_conv(X, K):
+    h, w = K.shape
+    Y = torch.zeros((X.shape[0] + h - 1), X.shape[1] + w - 1) # output
+    for i in range(X.shape[0]):
+        for j in range(X.shape[1]):
+            Y[i:i + h, j:j + w] += X[i, j] * K
+    return Y
+
+# 验证
+X = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+K = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+print(trans_conv(X, K) )
+
+# 使用高级API获得相同的结果
+X, K = X.reshape(1, 1, 2, 2), K.reshape(1, 1, 2, 2)
+tconv = nn.ConvTranspose2d(1, 1, kernel_size=2, bias=False)
+tconv.weight.data = K
+print(tconv(X))
+
+# * 填充、步幅、多通道
+# 这里的填充实际上是裁剪，padding等于1，对结果上下左右裁剪一圈
+tconv = nn.ConvTranspose2d(1, 1, kernel_size=2, padding=1, bias=False)
+tconv.weight.data = K
+print(tconv(X))
+
+tconv = nn.ConvTranspose2d(1, 1, kernel_size=2, stride=2, bias=False)
+tconv.weight.data = K
+print(tconv(X)) # (2xh + 2kh - 2s) * 2s
+
+# 多通道
+X = torch.rand(size=(1, 10, 16, 16))
+conv = nn.Conv2d(10, 20, kernel_size=5, padding=2, stride=3)
+tconv = nn.ConvTranspose2d(20, 10, kernel_size=5, padding=2, stride=3)
+print(tconv(conv(X)).shape == X.shape)
+
+# * 与矩阵变换的联系
+X = torch.arange(9.0).reshape(3, 3)
+K = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+Y = d2l.corr2d(X, K)
+print(Y)
+
+def kernel2matrix(K):
+    k, W = torch.zeros(5), torch.zeros((4, 9))
+    k[:2], k[3:5] = K[0, :], K[1, :]
+    W[0, :5], W[1, 1:6], W[2, 3:8], W[3, 4:] = k, k, k, k
+    return W
+
+W = kernel2matrix(K)
+print(W)
+
+print(Y == torch.matmul(W, X.reshape(-1)).reshape(2, 2))
+Z = trans_conv(Y, K)
+print(Z == torch.matmul(W.T, Y.reshape(-1)).reshape(3, 3))
+```
 
 ### 全卷积网络
 
