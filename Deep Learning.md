@@ -2638,8 +2638,250 @@ d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
 
 ## Chapter 7 : 循环神经网络
 ### 序列模型
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071653614.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071654744.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071657324.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071709327.png)
+f就是机器学习的模型，通过这个模型来预测下一个事件的模型
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071710534.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071713897.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071716523.png)
+根据现在观察到的数据和上一个状态的潜变量更新潜变量，减少计算
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071716645.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# 样本是带噪音的sin函数
+T = 1000  # 总共产生1000个点
+time = torch.arange(1, T + 1, dtype=torch.float32)
+x = torch.sin(0.01 * time) + torch.normal(0, 0.2, (T,))
+d2l.plot(time, [x], 'time', 'x', xlim=[1, 1000], figsize=(6, 3))
+d2l.plt.show()
+
+# * 训练
+# 马尔可夫模型
+tau = 4 # tao参数
+features = torch.zeros((T - tau, tau)) # t-tau是样本数，tau是特征数
+for i in range(tau):
+    features[:, i] = x[i: T - tau + i]
+labels = x[tau:].reshape((-1, 1))
+
+batch_size, n_train = 16, 600
+# 只有前n_train个样本用于训练
+train_iter = d2l.load_array((features[:n_train], labels[:n_train]), batch_size, is_train=True)
+
+# 初始化网络权重的函数
+def init_weights(m):
+    if type(m) == nn.Linear:
+        nn.init.xavier_uniform_(m.weight)
+
+# 一个简单的多层感知机
+def get_net():
+    net = nn.Sequential(nn.Linear(4, 10),
+                        nn.ReLU(),
+                        nn.Linear(10, 1))
+    net.apply(init_weights)
+    return net
+
+# 平方损失。注意：MSELoss计算平方误差时不带系数1/2
+loss = nn.MSELoss(reduction='none')
+
+# 正式训练
+def train(net, train_iter, loss, epochs, lr):
+    trainer = torch.optim.Adam(net.parameters(), lr)
+    for epoch in range(epochs):
+        for X, y in train_iter:
+            trainer.zero_grad()
+            l = loss(net(X), y)
+            l.sum().backward()
+            trainer.step()
+        print(f'epoch {epoch + 1}, '
+              f'loss: {d2l.evaluate_loss(net, train_iter, loss):f}')
+
+net = get_net()
+train(net, train_iter, loss, 5, 0.01)
+
+# * 预测
+# 单步预测
+# 每次给前四个真实数据，看看后面一个预测的怎么样
+onestep_preds = net(features)
+d2l.plot([time, time[tau:]],
+         [x.detach().numpy(), onestep_preds.detach().numpy()], 'time',
+         'x', legend=['data', '1-step preds'], xlim=[1, 1000],
+         figsize=(6, 3))
+d2l.plt.show()
+
+# 多步预测
+# 只给前四个真实数据，预测第五个，然后用第234个真实数据和第5个预测数据 预测第6个数据
+# 这里从600次开始使用多步预测，可以看出错的很离谱(误差的不断累加导致最终结果偏离真实值)
+multistep_preds = torch.zeros(T)
+multistep_preds[: n_train + tau] = x[: n_train + tau]
+for i in range(n_train + tau, T):
+    multistep_preds[i] = net(
+        multistep_preds[i - tau:i].reshape((1, -1)))
+
+d2l.plot([time, time[tau:], time[n_train + tau:]],
+         [x.detach().numpy(), onestep_preds.detach().numpy(),
+          multistep_preds[n_train + tau:].detach().numpy()], 'time',
+         'x', legend=['data', '1-step preds', 'multistep preds'],
+         xlim=[1, 1000], figsize=(6, 3))
+d2l.plt.show()
+
+# k步预测 给四个点，预测未来的k个点
+# e.g. k=16 
+# 第一步先给出1234真实点，来预测5，第二步用真实234预测5，来预测6，以此类推16步得到预测20，则预测点第一个点应该t=20
+# 第二个点先给出2345真实点，... ，得到t=21的预测值
+max_steps = 64
+
+features = torch.zeros((T - tau - max_steps + 1, tau + max_steps))
+# 列i（i<tau）是来自x的观测，其时间步从（i）到（i+T-tau-max_steps+1）
+for i in range(tau):
+    features[:, i] = x[i: i + T - tau - max_steps + 1]
+
+# 列i（i>=tau）是来自（i-tau+1）步的预测，其时间步从（i）到（i+T-tau-max_steps+1）
+for i in range(tau, tau + max_steps):
+    features[:, i] = net(features[:, i - tau:i]).reshape(-1)
+
+steps = (1, 4, 16, 64)
+d2l.plot([time[tau + i - 1: T - max_steps + i] for i in steps],
+         [features[:, (tau + i - 1)].detach().numpy() for i in steps], 'time', 'x',
+         legend=[f'{i}-step preds' for i in steps], xlim=[5, 1000],
+         figsize=(6, 3))
+d2l.plt.show()
+```
 
 ### 文本预处理
+```python
+import collections
+import re
+from d2l import torch as d2l
+
+# * 读取数据集
+d2l.DATA_HUB['time_machine'] = (d2l.DATA_URL + 'timemachine.txt',
+                                '090b5e7e70c295757f55df93cb0a180b9691891a')
+
+def read_time_machine():
+    """将时间机器数据集加载到文本行的列表中"""
+    with open(d2l.download('time_machine'), 'r') as f:
+        lines = f.readlines()
+    # 将除了字母以外的所有字符(标点符号，不认识的字母)全部变成空格 简化数据
+    return [re.sub('[^A-Za-z]+', ' ', line).strip().lower() for line in lines]
+
+lines = read_time_machine()
+print(f'# 文本总行数: {len(lines)}')
+print(lines[0])
+print(lines[10])
+
+# * 词元化
+def tokenize(lines, token='word'):
+    """将文本行拆分为单词或字符词元"""
+    if token == 'word': # 拆分为单词
+        return [line.split() for line in lines]
+    elif token == 'char': # 拆分为字母
+        return [list(line) for line in lines]
+    else:
+        print('错误：未知词元类型：' + token)
+
+tokens = tokenize(lines, token='char')
+for i in range(1):
+    print(tokens[i])
+
+tokens = tokenize(lines)
+for i in range(11):
+    print(tokens[i])
+
+# * 词表
+# 构建一个字典，将字符串类型的标记映射到从0开始的数字索引中
+class Vocab: 
+    """文本词表"""
+    # min_freq 若一个单词少于这个值则舍弃 reserved_tokens表示句子开始或者句子结束的token
+    def __init__(self, tokens=None, min_freq=0, reserved_tokens=None):
+        if tokens is None:
+            tokens = []
+        if reserved_tokens is None:
+            reserved_tokens = []
+        # 按出现频率从大到小排序token   key:排序的比较  .items()字典转元组 x[1]即词频，元组的第二个元素 
+        counter = count_corpus(tokens)
+        self._token_freqs = sorted(counter.items(), key=lambda x: x[1],
+                                   reverse=True)
+        # 未知词元的索引为0 '<unk>'用来表示词汇表中没有的单词
+        self.idx_to_token = ['<unk>'] + reserved_tokens
+        # 字典推导式 将token和id对应起来
+        self.token_to_idx = {token: idx
+                             for idx, token in enumerate(self.idx_to_token)}
+        # 添加高频词
+        for token, freq in self._token_freqs:
+            if freq < min_freq: # 小于最小出现频率 则舍弃
+                break
+            if token not in self.token_to_idx: # 检查是否已经存在于词汇表
+                self.idx_to_token.append(token)
+                self.token_to_idx[token] = len(self.idx_to_token) - 1 # 记录该词的索引位置
+    
+    # 返回token个数
+    def __len__(self):
+        return len(self.idx_to_token)
+
+    # 给token返回下标
+    def __getitem__(self, tokens):
+        if not isinstance(tokens, (list, tuple)):
+            # get用于取出字典指定key的value，若没有key默认值是self.unk
+            return self.token_to_idx.get(tokens, self.unk)
+        return [self.__getitem__(token) for token in tokens] # 一直拆分成直至不是list或tuple类型(str)
+
+    # 给下标返回tokens
+    def to_tokens(self, indices):
+        if not isinstance(indices, (list, tuple)):
+            return self.idx_to_token[indices]
+        return [self.idx_to_token[index] for index in indices]
+
+    @property
+    def unk(self):  # 未知词元的索引为0
+        return 0
+
+    @property
+    def token_freqs(self):
+        return self._token_freqs
+
+def count_corpus(tokens):  #@save
+    """统计词元的频率"""
+    # 这里的tokens是1D列表或2D列表
+    if len(tokens) == 0 or isinstance(tokens[0], list):
+        # 将词元列表展平成一个列表
+        '''
+        外层迭代：for line in tokens，表示遍历 tokens 的每一行（即每个子列表）。
+                在我们的示例中，这将依次取出 ['I', 'love', 'coding'] 和 ['Python', 'is', 'great']。
+        内层迭代：对于每一个 line，再使用 for token in line 遍历每个子列表 line 中的单词（或“token”）。
+        生成新列表：对于每一个 token，将其添加到新的列表中。
+        '''
+        tokens = [token for line in tokens for token in line]
+    return collections.Counter(tokens)
+
+vocab = Vocab(tokens)
+print(list(vocab.token_to_idx.items())[:10])
+
+for i in [0, 10]:
+    print('文本:', tokens[i])
+    print('索引:', vocab[tokens[i]])
+
+# * 整合所有功能
+def load_corpus_time_machine(max_tokens=-1):
+    """返回时光机器数据集的词元索引列表和词表"""
+    lines = read_time_machine()
+    tokens = tokenize(lines, 'char')
+    vocab = Vocab(tokens)
+    # 因为时光机器数据集中的每个文本行不一定是一个句子或一个段落，
+    # 所以将所有文本行展平到一个列表中
+    corpus = [vocab[token] for line in tokens for token in line]
+    if max_tokens > 0:
+        corpus = corpus[:max_tokens]
+    return corpus, vocab
+
+# corpus是每一个的字符下标 vocab是字表 28是因为实例选择了char参数，返回26个字母+<unk>+空格=28
+corpus, vocab = load_corpus_time_machine()
+print(len(corpus), len(vocab))
+```
 
 ### 语言模型和数据集
 
@@ -2705,20 +2947,14 @@ d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
 ### 学习率调度器
 
 ## Chapter 11 : 计算性能
-### 编译器和解释器
-
-### 异步计算
-
-### 自动并行
-
 ### 硬件
-CPU与GPU
+**CPU与GPU**
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221614016.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221615505.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221616180.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221617283.png)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221618269.png)
-TPU  
+**TPU**  
 张量处理单元是一种定制化的 ASIC 芯片，它由谷歌从头设计，并专门用于机器学习工作负载。
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202410221639761.png)
 
@@ -4235,9 +4471,269 @@ Z = trans_conv(Y, K)
 print(Z == torch.matmul(W.T, Y.reshape(-1)).reshape(3, 3))
 ```
 
-### 全卷积网络
+### 全连接卷积神经网络
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071336150.png)
+K个通道对应不同的类别，对(224，224)中每个像素点做预测  
+初始化卷积核参数的方法：双线性插值
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071421938.png)
+```python
+import torch
+import torchvision
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
+
+# * 构造模型
+pretrained_net = torchvision.models.resnet18(pretrained=True)
+# 查看后三层的网络结构
+print(list(pretrained_net.children())[-3:])
+
+# 创建一个全卷积网络实例net
+net = nn.Sequential(*list(pretrained_net.children())[:-2]) # 去掉全局池化层和全连接层
+X = torch.rand(size=(1, 3, 320, 480))
+print(net(X).shape)
+
+num_classes = 21 # pascal voc2012数据集类别数
+net.add_module('final_conv', nn.Conv2d(512, num_classes, kernel_size=1))
+net.add_module('transpose_conv', nn.ConvTranspose2d(num_classes, num_classes,
+                                                    kernel_size=64, padding=16, stride=32))
+
+# * 初始化转置卷积层
+# 使用经过双线性插值初始化的核，再使用转置卷积层，可以实现双线性插值的上采样
+def bilinear_kernel(in_channels, out_channels, kernel_size):
+    factor = (kernel_size + 1) // 2
+    if kernel_size % 2 == 1:
+        center = factor - 1
+    else:
+        center = factor - 0.5
+    og = (torch.arange(kernel_size).reshape(-1, 1),
+          torch.arange(kernel_size).reshape(1, -1))
+    filt = (1 - torch.abs(og[0] - center) / factor) * \
+           (1 - torch.abs(og[1] - center) / factor)
+    weight = torch.zeros((in_channels, out_channels,
+                          kernel_size, kernel_size))
+    weight[range(in_channels), range(out_channels), :, :] = filt
+    return weight
+
+# 实验
+# 输出图像的高宽翻倍
+conv_trans = nn.ConvTranspose2d(3, 3, kernel_size=4, padding=1, stride=2, bias=False)
+conv_trans.weight.data.copy_(bilinear_kernel(3, 3, 4))
+img = torchvision.transforms.ToTensor()(d2l.Image.open('related_data/cat_dog.png').convert('RGB'))
+X = img.unsqueeze(0)
+Y = conv_trans(X)
+out_img = Y[0].permute(1, 2, 0).detach()
+d2l.set_figsize()
+print('input image shape:', img.permute(1, 2, 0).shape)
+d2l.plt.imshow(img.permute(1, 2, 0))
+d2l.plt.show()
+print('output image shape:', out_img.shape)
+d2l.plt.imshow(out_img)
+d2l.plt.show()
+
+# 用双线性插值的上采样初始化转置卷积层，对于卷积层使用Xavier初始化参数
+W = bilinear_kernel(num_classes, num_classes, 64)
+net.transpose_conv.weight.data.copy_(W)
+
+# * 读取数据集
+batch_size, crop_size = 32, (320, 480)
+train_iter, test_iter = d2l.load_data_voc(batch_size, crop_size)
+
+# * 训练
+def loss(inputs, targets):
+    # 计算损失的结果是三维矩阵(样本，高，宽) 计算高和宽的矩阵就可以得到一个一维的值(每个样本的损失)
+    return F.cross_entropy(inputs, targets, reduction='none').mean(1).mean(1)
+
+num_epochs, lr, wd, devices = 5, 0.001, 1e-3, d2l.try_all_gpus()
+trainer = torch.optim.SGD(net.parameters(), lr=lr, weight_decay=wd)
+d2l.train_ch13(net, train_iter, test_iter, loss, trainer, num_epochs, devices)
+
+# * 预测
+def predict(img):
+    X = test_iter.dataset.normalize_image(img).unsqueeze(0)
+    # argmax(dim=1) 在每一个像素有21个通道(类别) 找个通道上最大的值即预测类别
+    pred = net(X.to(devices[0])).argmax(dim=1)
+    # reshape成跟输入图像尺寸一样
+    return pred.reshape(pred.shape[1], pred.shape[2])
+
+def label2image(pred):
+    colormap = torch.tensor(d2l.VOC_COLORMAP, device=devices[0])
+    X = pred.long()
+    return colormap[X, :]
+
+voc_dir = d2l.download_extract('voc2012', 'VOCdevkit/VOC2012')
+test_images, test_labels = d2l.read_voc_images(voc_dir, False)
+n, imgs = 4, []
+for i in range(n):
+    crop_rect = (0, 0, 320, 480)
+    X = torchvision.transforms.functional.crop(test_images[i], *crop_rect)
+    pred = label2image(predict(X))
+    imgs += [X.permute(1,2,0), pred.cpu(),
+             torchvision.transforms.functional.crop(
+                 test_labels[i], *crop_rect).permute(1,2,0)]
+d2l.show_images(imgs[::3] + imgs[1::3] + imgs[2::3], 3, n, scale=2)
+d2l.plt.show()
+```
 
 ### 风格迁移
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071529306.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071531462.png)
+`gram矩阵`的计算过程与意义：可以获取不同通道间风格的相似性
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411071611836.png)
+```python
+import torch
+import torchvision
+from torch import nn
+from d2l import torch as d2l
+
+# * 阅读内容和风格图像
+d2l.set_figsize()
+content_img = d2l.Image.open('related_data/content_img.jpeg')
+d2l.plt.imshow(content_img)
+d2l.plt.show()
+
+style_img = d2l.Image.open('related_data/style_img.jpeg')
+d2l.plt.imshow(style_img)
+d2l.plt.show()
+
+# * 预处理和后处理
+rgb_mean = torch.tensor([0.485, 0.456, 0.406])
+rgb_std = torch.tensor([0.229, 0.224, 0.225])
+
+# 预处理函数preprocess对输入图像在RGB三个通道分别做标准化，并将结果变换成卷积神经网络接受的输入格式
+def preprocess(img, image_shape):
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.Resize(image_shape),
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize(mean=rgb_mean, std=rgb_std)])
+    return transforms(img).unsqueeze(0)
+
+# 后处理函数postprocess则将输出图像中的像素值还原回标准化之前的值
+def postprocess(img):
+    img = img[0].to(rgb_std.device)
+    # 由于图像打印函数要求每个像素的浮点数值在0～1之间，我们对小于0和大于1的值分别取0和
+    img = torch.clamp(img.permute(1, 2, 0) * rgb_std + rgb_mean, 0, 1)
+    return torchvision.transforms.ToPILImage()(img.permute(2, 0, 1))
+
+# * 抽取图像特征
+pretrained_net = torchvision.models.vgg19(pretrained=True)
+
+# 哪些层的输出用来匹配样式，哪些层用来匹配内容
+# 网络越靠下，越匹配局部信息，越往上，越匹配全局信息，样式二者均想要保留，而内容允许局部信息更新(变形)，仅保留全局的大致的样子
+style_layers, content_layers = [0, 5, 10, 19, 28], [25]
+
+# 网络仅保留28层结构
+net = nn.Sequential(*[pretrained_net.features[i] for i in range(max(content_layers + style_layers) + 1)])
+
+# 保留内容层和风格层的输出
+def extract_features(X, content_layers, style_layers):
+    contents = []
+    styles = []
+    for i in range(len(net)):
+        X = net[i](X)
+        if i in style_layers:
+            styles.append(X)
+        if i in content_layers:
+            contents.append(X)
+    return contents, styles
+
+# get_contents函数对内容图像抽取内容特征
+def get_contents(image_shape, device):
+    content_X = preprocess(content_img, image_shape).to(device)
+    contents_Y, _ = extract_features(content_X, content_layers, style_layers)
+    return content_X, contents_Y
+
+# get_styles函数对风格图像抽取风格特征
+def get_styles(image_shape, device):
+    style_X = preprocess(style_img, image_shape).to(device)
+    _, styles_Y = extract_features(style_X, content_layers, style_layers)
+    return style_X, styles_Y
+
+# * 定义损失函数
+# 内容损失
+def content_loss(Y_hat, Y):
+    # 我们从动态计算梯度的树中分离目标：
+    # 这是一个规定的值，而不是一个变量。
+    return torch.square(Y_hat - Y.detach()).mean()
+
+# 风格损失 
+# 风格一致的定义不是说输出图像要和样式图像的像素值一致，而是每个通道内的统计分布与通道间的统计分布和样式图像一致
+def gram(X):
+    num_channels, n = X.shape[1], X.numel() // X.shape[1]
+    X = X.reshape((num_channels, n))
+    return torch.matmul(X, X.T) / (num_channels * n)
+
+def style_loss(Y_hat, gram_Y):
+    return torch.square(gram(Y_hat) - gram_Y.detach()).mean()
+
+# 全变分损失
+# 去除合成图像里的高频噪点(特别亮或者特别暗的像素点) 使每个像素能与临近的像素值相似
+def tv_loss(Y_hat):
+    return 0.5 * (torch.abs(Y_hat[:, :, 1:, :] - Y_hat[:, :, :-1, :]).mean() +
+                  torch.abs(Y_hat[:, :, :, 1:] - Y_hat[:, :, :, :-1]).mean())
+
+# 损失函数
+# 风格转移的损失函数是内容损失、风格损失和总变化损失的加权和。 
+# 通过调节这些权重超参数，我们可以权衡合成图像在保留内容、迁移风格以及去噪三方面的相对重要性。
+content_weight, style_weight, tv_weight = 1, 1e3, 10
+
+def compute_loss(X, contents_Y_hat, styles_Y_hat, contents_Y, styles_Y_gram):
+    # 分别计算内容损失、风格损失和全变分损失
+    contents_l = [content_loss(Y_hat, Y) * content_weight for Y_hat, Y in zip(
+        contents_Y_hat, contents_Y)]
+    styles_l = [style_loss(Y_hat, Y) * style_weight for Y_hat, Y in zip(
+        styles_Y_hat, styles_Y_gram)]
+    tv_l = tv_loss(X) * tv_weight
+    # 对所有损失求和
+    l = sum(10 * styles_l + contents_l + [tv_l])
+    return contents_l, styles_l, tv_l, l
+
+# * 初始化合成图像
+class SynthesizedImage(nn.Module):
+    def __init__(self, img_shape, **kwargs):
+        super(SynthesizedImage, self).__init__(**kwargs)
+        # 权重初始化为图像形状的随机值
+        self.weight = nn.Parameter(torch.rand(*img_shape))
+
+    def forward(self):
+        return self.weight
+
+def get_inits(X, device, lr, styles_Y):
+    gen_img = SynthesizedImage(X.shape).to(device)
+    gen_img.weight.data.copy_(X.data)
+    trainer = torch.optim.Adam(gen_img.parameters(), lr=lr)
+    styles_Y_gram = [gram(Y) for Y in styles_Y]
+    return gen_img(), styles_Y_gram, trainer
+
+# 训练模型
+def train(X, contents_Y, styles_Y, device, lr, num_epochs, lr_decay_epoch):
+    X, styles_Y_gram, trainer = get_inits(X, device, lr, styles_Y)
+    scheduler = torch.optim.lr_scheduler.StepLR(trainer, lr_decay_epoch, 0.8)
+    animator = d2l.Animator(xlabel='epoch', ylabel='loss',
+                            xlim=[10, num_epochs],
+                            legend=['content', 'style', 'TV'],
+                            ncols=2, figsize=(7, 2.5))
+    for epoch in range(num_epochs):
+        trainer.zero_grad()
+        contents_Y_hat, styles_Y_hat = extract_features(
+            X, content_layers, style_layers)
+        contents_l, styles_l, tv_l, l = compute_loss(
+            X, contents_Y_hat, styles_Y_hat, contents_Y, styles_Y_gram)
+        l.backward()
+        trainer.step()
+        scheduler.step()
+        if (epoch + 1) % 10 == 0:
+            animator.axes[1].imshow(postprocess(X))
+            animator.add(epoch + 1, [float(sum(contents_l)),
+                                     float(sum(styles_l)), float(tv_l)])
+    return X
+
+device, image_shape = d2l.try_gpu(), (300, 450)
+net = net.to(device)
+content_X, contents_Y = get_contents(image_shape, device)
+_, styles_Y = get_styles(image_shape, device)
+output = train(content_X, contents_Y, styles_Y, device, 0.3, 500, 50)
+```
 
 ### 实战Kaggle比赛：图像分类(CIFAR-10)
 ```python
