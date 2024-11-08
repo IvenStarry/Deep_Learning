@@ -2884,10 +2884,372 @@ print(len(corpus), len(vocab))
 ```
 
 ### 语言模型和数据集
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411080923314.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411080928849.png)
+> n是token的总个数，n(x)是x出现的总次数，n(x, x')是x后面紧跟x'的总次数
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411080933735.png)
+区别
+- 一元语法（unigram）
+    马尔科夫假设中的 τ 为 0 ，也就是说每次计算 xt 的概率时，不用考虑 xt 之前的数据，使用一元语法计算 p（ x1,x2,x3,x4）：可以认为这个序列中每个词是独立的
+- 二元语法（bigram）
+    马尔科夫假设中的 τ 为 1 ，也就是说每次计算 xt 的概率时，只依赖于 x( t-1 )，也就是说每一个词和前面一个词是相关的
+- 三元语法（trigram）
+    马尔科夫假设中的 τ 为 2 ，也就是说每次计算 xt 的概率时，只依赖于 x( t - 1 ) 和 x( t - 2 )，也就是说每一个词和前面两个词是相关的
+
+**N 元语法的好处**
+- 最大的好处是可以处理比较长的序列。如果序列很长的话，很难把它存下来，不可能将序列中任何长度的序列都存下来，这是一个指数级的复杂度
+- 所以对于任意长度的序列，N 元语法所扫描的子序列长度是固定的：比如说对于二元语法来说，每次只看长为 2 的子序列，首先将长度为 2 的任何一个词 n(x1,x2)（都来自序列中，假设整个字典中有 1000 个词，则长为 2 的词有 1000*1000=1000，000 种可能性）存下来，然后将每一个词和另外一个词组成的词在文本中出现的概率 n(x1,x2) 全部存起来，再把一个词 n(x1) 出现的概率存起来，最后把　ｎ　（也就是１０００）存起来
+- 查询一个任意长度的序列的时间复杂度为　ｏ（Ｔ），Ｔ　是序列长度
+- Ｎ　元语法和　Ｎ　是一个指数关系，随着　Ｎ　的增大，需要存的东西就会变得很大，所以一元语法使用的不多（一元语法完全忽略掉了时序信息），二元语法、三元语法使用的比较多
+- 使用马尔科夫假设的　Ｎ　元语法的好处：如果将词存起来，就可以使得计算复杂度变成　ｏ（Ｔ）而不是ｏ（Ｎ）ｏ（Ｔ）很重要，因为语料库通常会很大，判断一个句子的概率的情况下，每秒钟可能需要做一百万次左右，在语音识别或者是输入法补全的时候需要进行实时的计算，因此计算复杂度非常关键，对于　Ｎ　元语法来讲，Ｎ　越大，精度越高，但是随着　Ｎ　的增大，空间复杂度也会增大，即使是这样，二元语法、三元语法也是非常常见的模型
+
+**总结**：
+- 语言模型估计文本序列的联合概率
+- 使用统计方法时常采用n元语法
+
+**读取长序列数据**：序列数据本质上是连续的，因此当序列变得太长而不能被模型一次性全部处理时，就希望对序列进行拆分以方便模型的读取
+
+**如何随机生成一个小批量数据的特征和标签以供读取？**
+1. 文本序列可以是任意长的，因此任意长的序列可以被划分为具有相同时间步数的子序列
+2. 训练神经网络时，将这些具有相同步数的小批量子序列输入到模型中
+    - e.g 假设神经网络一次处理具有ｎ个时间步的子序列，下图展示了从原始文本序列中获得子序列的所有不同的方式，其中ｎ等于５，并且每个时间步的词元对应于一个字符
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081505904.png)
+3. 由于可以选择任意偏移量来指示初始位置，因此具有相当大的自由度
+   - 如果只选择一个偏移量，那么用于训练网络的、所有可能的子序列的覆盖范围将是有限的。因此可以从随机偏移量开始划分序列，来同时获得覆盖性（coverage）和随机性（randomness）
+
+采样方法：
+- 随机采样（ｒａｎｄｏｍ　ｓａｍｐｌｉｎｇ）
+    - 随机采样中，每个样本都是在原始的长序列上任意捕获的子序列
+    - 在迭代过程中，来自两个相邻的、随机的、小批量中的子序列不一定在原始序列上相邻
+    - 语言建模的目标是基于当前所看到的词元预测下一个词元，因此标签是移位了一个词元的原始序列
+- 顺序分区
+    - 迭代过程中，除了对原始序列可以随机抽样外，还可以保证两个相邻的小批量中的子序列在原始序列上也是相邻的，这种策略在基于小批量的迭代过程中保留了拆分的子序列的顺序
+
+```python
+import random
+import torch
+from d2l import torch as d2l
+
+# 自然语言统计
+tokens = d2l.tokenize(d2l.read_time_machine())
+# 因为每个文本行不一定是一个句子或一个段落，因此我们把所有文本行拼接到一起
+corpus = [token for line in tokens for token in line]
+vocab = d2l.Vocab(corpus)
+print(vocab.token_freqs[:10])
+
+# 最流行的词被称为停用词，对语句理解没有太多实际意义，只充当语法使用，但我们仍会在模型中去使用
+freqs = [freq for token, freq in vocab.token_freqs]
+d2l.plot(freqs, xlabel='token: x', ylabel='frequency: n(x)',
+         xscale='log', yscale='log')
+d2l.plt.show()
+
+# 二元语法
+# corpus[:-1] 从第一个到倒数第二个词 corpus[1:] 从第二个到倒数第一个词 使用zip进行配对(1, 2)(2, 3)...
+bigram_tokens = [pair for pair in zip(corpus[:-1], corpus[1:])]
+bigram_vocab = d2l.Vocab(bigram_tokens)
+print(bigram_vocab.token_freqs[:10])
+
+# 三元语法  已经出现很多有意义的文本
+trigram_tokens = [triple for triple in zip(corpus[:-2], corpus[1:-1], corpus[2:])]
+trigram_vocab = d2l.Vocab(trigram_tokens)
+print(trigram_vocab.token_freqs[:10])
+
+# 直观对比词元频率
+bigram_freqs = [freq for token, freq in bigram_vocab.token_freqs]
+trigram_freqs = [freq for token, freq in trigram_vocab.token_freqs]
+d2l.plot([freqs, bigram_freqs, trigram_freqs], xlabel='token: x',
+         ylabel='frequency: n(x)', xscale='log', yscale='log',
+         legend=['unigram', 'bigram', 'trigram'])
+d2l.plt.show()
+
+# * 读取长序列模型
+# ? 随机采样
+# 随机生成一个小批量数据的特征和标签
+def seq_data_iter_random(corpus, batch_size, num_steps): # corpus 词序列 num_steps:马尔科夫中的tao 每次取tao个词
+    # 从随机偏移量开始对序列进行分区操作，随即范围包括k:num_steps - 1
+    corpus = corpus[random.randint(0, num_steps - 1):]
+    # 生成的子序列个数
+    num_subseqs = (len(corpus) - 1) // num_steps
+    # 长度为num_steps的子序列的起始索引
+    initial_indices = list(range(0, num_subseqs * num_steps, num_steps))
+    # 随机采样，两个相邻的随机子序列不一定在原始序列上相邻
+    random.shuffle(initial_indices)
+
+    def data(pos): # 根据位置取序列
+        return corpus[pos:pos + num_steps]
+
+    # 可生成的batch个数
+    num_batches = num_subseqs // batch_size
+    # 每个取一个batchsize
+    for i in range(0, batch_size * num_batches, batch_size):
+        # 每个batch的起始索引
+        initial_indices_per_batch = initial_indices[i: i + batch_size]
+        # 每个子序列长度为 num_steps
+        X = [data(j) for j in initial_indices_per_batch]
+        # 在corpus中，X偏移后一个的序列 
+        Y = [data(j + 1) for j in initial_indices_per_batch]
+        yield torch.tensor(X), torch.tensor(Y)
+
+my_seq = list(range(35))
+for X, Y in seq_data_iter_random(my_seq, batch_size=2, num_steps=5):
+    print('X: ', X, '\nY:', Y)
+
+# ? 顺序分区
+# 两个相邻的小批量的子序列在原始序列上也是相邻的
+def seq_data_iter_sequential(corpus, batch_size, num_steps):  #@save
+    """使用顺序分区生成一个小批量子序列"""
+    # 从随机偏移量开始划分序列
+    offset = random.randint(0, num_steps)
+    num_tokens = ((len(corpus) - offset - 1) // batch_size) * batch_size
+    Xs = torch.tensor(corpus[offset: offset + num_tokens])
+    Ys = torch.tensor(corpus[offset + 1: offset + 1 + num_tokens])
+    Xs, Ys = Xs.reshape(batch_size, -1), Ys.reshape(batch_size, -1)
+    num_batches = Xs.shape[1] // num_steps
+    for i in range(0, num_steps * num_batches, num_steps):
+        X = Xs[:, i: i + num_steps]
+        Y = Ys[:, i: i + num_steps]
+        yield X, Y
+
+print('--------------------------------')
+for X, Y in seq_data_iter_sequential(my_seq, batch_size=2, num_steps=5):
+    print('X: ', X, '\nY:', Y)
+
+# 打包
+class SeqDataLoader: 
+    """加载序列数据的迭代器"""
+    # use_random_iter是否随机 max_tokens若数据太大 则截取max_tokens
+    def __init__(self, batch_size, num_steps, use_random_iter, max_tokens):
+        if use_random_iter:
+            self.data_iter_fn = d2l.seq_data_iter_random
+        else:
+            self.data_iter_fn = d2l.seq_data_iter_sequential
+        self.corpus, self.vocab = d2l.load_corpus_time_machine(max_tokens)
+        self.batch_size, self.num_steps = batch_size, num_steps
+
+    def __iter__(self):
+        return self.data_iter_fn(self.corpus, self.batch_size, self.num_steps)
+
+# 定义函数，返回数据迭代器和词表
+def load_data_time_machine(batch_size, num_steps, use_random_iter=False, max_tokens=10000):
+    """返回时光机器数据集的迭代器和词表"""
+    data_iter = SeqDataLoader(
+        batch_size, num_steps, use_random_iter, max_tokens)
+    return data_iter, data_iter.vocab
+```
 
 ### 循环神经网络
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081604621.png)
+观察第一个字，模型预测输出第二个字，观察第二个字，模型预测输出第三个字，当前时刻输出在当前时刻的观察之前
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081609999.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081613721.png)
+**困惑度**：可以给出下一时刻的候选词(输入法中，打出拼音，给出后面一堆候选)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081618634.png)
+**梯度剪裁**：梯度长度就是每个层梯度连乘的个数，超过theta就只保留theta个，不超过全部保留
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081626727.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081628846.png)
+> 第一个没时序信息，实际上就是MLP
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411081630023.png)
 
 ### 循环神经网络的从零开始实现
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411082035049.jpg)
+```python
+import math
+import torch
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
+
+batch_size, num_steps = 32, 35
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+
+# * 独热编码
+# 长度是28，将下标为0或2的数值置1，其余置0, shape:(tensor, num_classes)
+print(F.one_hot(torch.tensor([0, 2]), len(vocab)))
+
+# 假定一个小批量 (批量大小， 时间步数)
+X = torch.arange(10).reshape((2, 5))
+# 转置目的x[0,:,:]表示T(0)状态,X[1,:,:]表示T(1)状态，满足时序关系，实现并行计算
+print(F.one_hot(X.T, 28).shape)
+
+# * 初始化循环神经网络模型的模型参数
+def get_params(vocab_size, num_hiddens, device):
+    # 输入维度是oneshot的尺寸也就是bocab_size，输出就是对下一个单词的预测，也等于vocab_size
+    num_inputs = num_outputs = vocab_size
+
+    def normal(shape):
+        # 均值为0 方差为0.01
+        return torch.randn(size=shape, device=device) * 0.01
+    
+    # 隐藏层的参数
+    # 对输入映射到隐藏层的矩阵 
+    W_xh = normal((num_inputs, num_hiddens))
+    # 上一时刻的隐藏变量到下一时刻的隐藏变量
+    W_hh = normal((num_hiddens, num_hiddens))
+    # 到隐藏层的偏置项
+    b_h = torch.zeros(num_hiddens, device=device)
+
+    # 输出层参数
+    # 隐藏层映射到输出的矩阵
+    W_hq = normal((num_hiddens, num_outputs))
+    # 到输出的偏置项
+    b_q = torch.zeros(num_outputs, device=device)
+
+    # 附加梯度
+    params = [W_xh, W_hh, b_h, W_hq, b_q]
+    for param in params:
+        param.requires_grad_(True)
+    return params
+
+# * 循环神经网络模型
+# 在初始化时返回隐藏状态
+def init_rnn_state(batch_size, num_hiddens, device):
+    return (torch.zeros((batch_size, num_hiddens), device=device), )
+
+# state 初始化的隐藏状态 params可学习的参数
+def rnn(inputs, state, params):
+    W_xh, W_hh, b_h, W_hq, b_q = params
+    H, = state
+    outputs = []
+    # input shape(time_step, batch_size, vocab_size) 这里for取出的一个step的矩阵
+    for X in inputs:
+        # H当前时刻的隐藏元 X, W_xh (batch_size, num_hiddens)  H, W_hh(batch_size, num_hiddens) b_h(num_hiddens)
+        H = torch.tanh(torch.mm(X, W_xh) + torch.mm(H, W_hh) + b_h)
+        # Y当前时刻的输出
+        Y = torch.mm(H, W_hq) + b_q
+        # output shape(time_step, batch_size, vocab_size)
+        outputs.append(Y)
+    # 拼接后变成了(time_step*batch_size, vocab_size)
+    return torch.cat(outputs, dim=0), (H,)
+
+# 包装成类
+class RNNModelScratch:
+    def __init__(self, vocab_size, num_hiddens, device, get_params, init_state, forward_fn):
+        self.vocab_size, self.num_hiddens = vocab_size, num_hiddens
+        self.params = get_params(vocab_size, num_hiddens, device)
+        self.init_state, self.forward_fn = init_state, forward_fn
+    
+    def __call__(self, X, state):
+        X = F.one_hot(X.T, self.vocab_size).type(torch.float32)
+        return self.forward_fn(X, state, self.params)
+
+    def begin_state(self, batch_size, device):
+        return self.init_state(batch_size, self.num_hiddens, device)
+
+# 例子
+num_hiddens = 512
+net = RNNModelScratch(len(vocab), num_hiddens, d2l.try_gpu(), get_params, init_rnn_state, rnn)
+state = net.begin_state(X.shape[0], d2l.try_gpu())
+Y, new_state = net(X.to(d2l.try_gpu()), state)
+# Y(bz*ts, vs) new_state[0] (bs, num_hiddens)
+print(Y.shape, len(new_state), new_state[0].shape)
+
+# * 预测
+def predict_ch8(prefix, num_preds, net, vocab, device): # prefix开头提示句 num_preds预测字个数
+    state = net.begin_state(batch_size=1, device=device)
+    # 拿到开头词的下标放在outputs
+    outputs = [vocab[prefix[0]]]
+    # 将output最后一个词作为下一个的输入 time_step:1, batch_size:1
+    get_input = lambda: torch.tensor([outputs[-1]], device=device).reshape((1, 1))
+    for y in prefix[1:]:  # 预热期
+        # 根据训练好的模型权重得到这一时刻的状态H
+        _, state = net(get_input(), state)
+        # 把此时真实的输出存入outputs
+        outputs.append(vocab[y])
+    for _ in range(num_preds):  # 预测num_preds步
+        # 输入是output中最后一个字母
+        y, state = net(get_input(), state)
+        outputs.append(int(y.argmax(dim=1).reshape(1))) # 第一维度就是vocab_size(独热)预测最大值的下标，reshape成标量
+    return ''.join([vocab.idx_to_token[i] for i in outputs])
+
+predict_ch8('time traveller ', 10, net, vocab, d2l.try_gpu())
+
+# * 梯度裁剪
+def grad_clipping(net, theta):  #@save
+    """裁剪梯度"""
+    if isinstance(net, nn.Module):
+        params = [p for p in net.parameters() if p.requires_grad]
+    else:
+        params = net.params
+    
+    # L2norm 正则化
+    # params是所有层的梯度，p是每一层的梯度，先求每一层的sum，再求全局sum
+    norm = torch.sqrt(sum(torch.sum((p.grad ** 2)) for p in params))
+    if norm > theta:
+        for param in params:
+            param.grad[:] *= theta / norm
+
+# * 训练
+def train_epoch_ch8(net, train_iter, loss, updater, device, use_random_iter):
+    """训练网络一个迭代周期（定义见第8章）"""
+    state, timer = None, d2l.Timer()
+    metric = d2l.Accumulator(2)  # 训练损失之和,词元数量
+    for X, Y in train_iter:
+        if state is None or use_random_iter:
+            # 在第一次迭代或使用随机抽样时(因为时序信息不连续)初始化state
+            state = net.begin_state(batch_size=X.shape[0], device=device)
+        else:
+            if isinstance(net, nn.Module) and not isinstance(state, tuple):
+                # state对于nn.GRU是个张量 断开前面的链式求导 只关心现在以及后面的状态
+                state.detach_()
+            else:
+                # state对于nn.LSTM或对于我们从零开始实现的模型是个张量
+                for s in state:
+                    s.detach_()
+        # 真实输出拉成向量 配合y_hat
+        y = Y.T.reshape(-1)
+        X, y = X.to(device), y.to(device)
+        y_hat, state = net(X, state)
+        # y_hat (time_step*batch_size, vocab_size)    .long()将数字或者字符串转为长整型
+        l = loss(y_hat, y.long()).mean()
+        if isinstance(updater, torch.optim.Optimizer):
+            updater.zero_grad()
+            l.backward()
+            # 梯度裁剪
+            grad_clipping(net, 1)
+            updater.step()
+        else:
+            l.backward()
+            grad_clipping(net, 1)
+            # 因为已经调用了mean函数
+            updater(batch_size=1)
+        metric.add(l * y.numel(), y.numel())
+    # math.exp(metric[0] / metric[1]) 困惑度 metric[0]：loss累加 metric[1]：样本总数
+    return math.exp(metric[0] / metric[1]), metric[1] / timer.stop()
+
+def train_ch8(net, train_iter, vocab, lr, num_epochs, device,
+              use_random_iter=False):
+    """训练模型（定义见第8章）"""
+    loss = nn.CrossEntropyLoss()
+    animator = d2l.Animator(xlabel='epoch', ylabel='perplexity',
+                            legend=['train'], xlim=[10, num_epochs])
+    # 初始化
+    if isinstance(net, nn.Module):
+        updater = torch.optim.SGD(net.parameters(), lr)
+    else:
+        updater = lambda batch_size: d2l.sgd(net.params, lr, batch_size)
+    predict = lambda prefix: predict_ch8(prefix, 50, net, vocab, device)
+    # 训练和预测
+    for epoch in range(num_epochs):
+        ppl, speed = train_epoch_ch8(
+            net, train_iter, loss, updater, device, use_random_iter)
+        if (epoch + 1) % 10 == 0:
+            print(predict('time traveller'))
+            animator.add(epoch + 1, [ppl])
+    print(f'困惑度 {ppl:.1f}, {speed:.1f} 词元/秒 {str(device)}')
+    print(predict('time traveller'))
+    print(predict('traveller'))
+
+# 正式训练
+num_epochs, lr = 500, 1
+# 顺序
+train_ch8(net, train_iter, vocab, lr, num_epochs, d2l.try_gpu())
+
+net = RNNModelScratch(len(vocab), num_hiddens, d2l.try_gpu(), get_params,
+                      init_rnn_state, rnn)
+# 随机
+train_ch8(net, train_iter, vocab, lr, num_epochs, d2l.try_gpu(),
+          use_random_iter=True)
+```
 
 ### 循环神经网络的简洁实现
 
