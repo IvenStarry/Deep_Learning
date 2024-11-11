@@ -3252,11 +3252,157 @@ train_ch8(net, train_iter, vocab, lr, num_epochs, d2l.try_gpu(),
 ```
 
 ### 循环神经网络的简洁实现
+```python
+import torch
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
 
-### 通过时间反向传播
+batch_size, num_steps = 32, 35
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+
+# * 定义模型
+num_hiddens = 256
+rnn_layer = nn.RNN(len(vocab), num_hiddens)
+
+# 使用张量来初始化状态 shape(隐藏层数, batch_size, num_hiddens)
+state = torch.zeros((1, batch_size, num_hiddens))
+print(state.shape)
+
+X = torch.rand(size=(num_steps, batch_size, len(vocab)))
+Y, state_new = rnn_layer(X, state)
+# Y是最后一个隐藏层不是输出  Y.shape(时间，批量，输出)
+print(Y.shape, state_new.shape)
+
+# torch中的RNN不包含输出层
+class RNNModel(nn.Module):
+    """循环神经网络模型"""
+    def __init__(self, rnn_layer, vocab_size, **kwargs):
+        super(RNNModel, self).__init__(**kwargs)
+        self.rnn = rnn_layer
+        self.vocab_size = vocab_size
+        self.num_hiddens = self.rnn.hidden_size
+        # 如果RNN是双向的（之后将介绍），num_directions应该是2，否则应该是1
+        if not self.rnn.bidirectional:
+            self.num_directions = 1
+            self.linear = nn.Linear(self.num_hiddens, self.vocab_size)
+        else:
+            self.num_directions = 2
+            self.linear = nn.Linear(self.num_hiddens * 2, self.vocab_size)
+
+    def forward(self, inputs, state):
+        X = F.one_hot(inputs.T.long(), self.vocab_size)
+        X = X.to(torch.float32)
+        Y, state = self.rnn(X, state)
+        # 全连接层首先将Y的形状改为(时间步数*批量大小,隐藏单元数)
+        # 它的输出形状是(时间步数*批量大小,词表大小)。
+        output = self.linear(Y.reshape((-1, Y.shape[-1])))
+        return output, state
+
+    def begin_state(self, device, batch_size=1):
+        if not isinstance(self.rnn, nn.LSTM):
+            # nn.GRU以张量作为隐状态
+            return  torch.zeros((self.num_directions * self.rnn.num_layers,
+                                 batch_size, self.num_hiddens),
+                                device=device)
+        else:
+            # nn.LSTM以元组作为隐状态
+            return (torch.zeros((
+                self.num_directions * self.rnn.num_layers,
+                batch_size, self.num_hiddens), device=device),
+                    torch.zeros((
+                        self.num_directions * self.rnn.num_layers,
+                        batch_size, self.num_hiddens), device=device))
+
+# * 训练和预测
+device = d2l.try_gpu()
+net = RNNModel(rnn_layer, vocab_size=len(vocab))
+net = net.to(device)
+d2l.predict_ch8('time traveller', 10, net, vocab, device)
+
+num_epochs, lr = 500, 1
+d2l.train_ch8(net, train_iter, vocab, lr, num_epochs, device)
+```
 
 ## Chapter 8 : 现代循环神经网络
 ### 门控循环单元(GRU)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411112129816.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411112132640.png)
+- 对于当前更新的状态H~t，Rt全为0则遗忘之前所有的状态Ht-1，若全为1则保留以前全部的状态Ht-1作候选状态
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411112135409.png)
+- 对于当前时刻的状态Ht，Zt全为0则只关注更新的状态H~t，若全为1则只关注之前的状态Ht-1
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411112137175.png)
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411112139406.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 从零开始实现
+batch_size, num_steps = 32, 35
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+
+# 初始化模型参数
+def get_params(vocab_size, num_hiddens, device):
+    num_inputs = num_outputs = vocab_size
+
+    def normal(shape):
+        return torch.randn(size=shape, device=device)*0.01
+
+    # 方便生成
+    def three():
+        return (normal((num_inputs, num_hiddens)),
+                normal((num_hiddens, num_hiddens)),
+                torch.zeros(num_hiddens, device=device))
+    
+    W_xz, W_hz, b_z = three()  # 更新门参数
+    W_xr, W_hr, b_r = three()  # 重置门参数
+    W_xh, W_hh, b_h = three()  # 候选隐状态参数
+
+    # 输出层参数
+    W_hq = normal((num_hiddens, num_outputs))
+    b_q = torch.zeros(num_outputs, device=device)
+
+    # 附加梯度
+    params = [W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q]
+    for param in params:
+        param.requires_grad_(True)
+    return params
+
+# 定义隐藏状态的初始化函数
+def init_gru_state(batch_size, num_hiddens, device):
+    return (torch.zeros((batch_size, num_hiddens), device=device), )
+
+# 定义门控循环模型
+def gru(inputs, state, params):
+    W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q = params
+    H, = state
+    outputs = []
+    for X in inputs:
+        # @的作用相当于 torch.mm toch,matmul 写起来更加整洁
+        Z = torch.sigmoid((X @ W_xz) + (H @ W_hz) + b_z)
+        R = torch.sigmoid((X @ W_xr) + (H @ W_hr) + b_r)
+        H_tilda = torch.tanh((X @ W_xh) + ((R * H) @ W_hh) + b_h) # 候选状态 R * H 是点乘 哈达玛积
+        H = Z * H + (1 - Z) * H_tilda
+        Y = H @ W_hq + b_q
+        outputs.append(Y)
+    return torch.cat(outputs, dim=0), (H,)
+
+# 训练与预测
+vocab_size, num_hiddens, device = len(vocab), 256, d2l.try_gpu()
+num_epochs, lr = 500, 1
+model = d2l.RNNModelScratch(len(vocab), num_hiddens, device, get_params,
+                            init_gru_state, gru)
+d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
+
+# * 简洁实现
+num_inputs = vocab_size
+gru_layer = nn.GRU(num_inputs, num_hiddens)
+model = d2l.RNNModel(gru_layer, len(vocab))
+model = model.to(device)
+d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
+```
 
 ### 长短期记忆网络(LSTM)
 
