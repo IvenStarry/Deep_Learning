@@ -3275,7 +3275,7 @@ Y, state_new = rnn_layer(X, state)
 print(Y.shape, state_new.shape)
 
 # torch中的RNN不包含输出层
-class RNNModel(nn.Module):
+class RNNModel(nn.Module): 
     """循环神经网络模型"""
     def __init__(self, rnn_layer, vocab_size, **kwargs):
         super(RNNModel, self).__init__(**kwargs)
@@ -3405,16 +3405,588 @@ d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
 ```
 
 ### 长短期记忆网络(LSTM)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120919927.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120920423.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120920393.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120927029.png)
+为了确保隐状态在[-1, +1]之间，对记忆单元Ct再做一次tanh，避免梯度爆炸
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120925378.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120929519.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+batch_size, num_steps = 32, 35
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+
+# * 从零开始实现
+def get_lstm_params(vocab_size, num_hiddens, device):
+    num_inputs = num_outputs = vocab_size
+
+    def normal(shape):
+        return torch.randn(size=shape, device=device)*0.01
+
+    def three():
+        return (normal((num_inputs, num_hiddens)),
+                normal((num_hiddens, num_hiddens)),
+                torch.zeros(num_hiddens, device=device))
+
+    W_xi, W_hi, b_i = three()  # 输入门参数
+    W_xf, W_hf, b_f = three()  # 遗忘门参数
+    W_xo, W_ho, b_o = three()  # 输出门参数
+    W_xc, W_hc, b_c = three()  # 候选记忆元参数
+
+    # 输出层参数
+    W_hq = normal((num_hiddens, num_outputs))
+    b_q = torch.zeros(num_outputs, device=device)
+
+    # 附加梯度
+    params = [W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o, W_xc, W_hc,
+              b_c, W_hq, b_q]
+    for param in params:
+        param.requires_grad_(True)
+    return params
+
+# 初始化隐藏层状态
+def init_lstm_state(batch_size, num_hiddens, device):
+    return (torch.zeros((batch_size, num_hiddens), device=device),
+            torch.zeros((batch_size, num_hiddens), device=device))
+
+# 定义模型
+def lstm(inputs, state, params):
+    [W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o, W_xc, W_hc, b_c,
+     W_hq, b_q] = params
+    (H, C) = state
+    outputs = []
+    for X in inputs:
+        I = torch.sigmoid((X @ W_xi) + (H @ W_hi) + b_i)
+        F = torch.sigmoid((X @ W_xf) + (H @ W_hf) + b_f)
+        O = torch.sigmoid((X @ W_xo) + (H @ W_ho) + b_o)
+        C_tilda = torch.tanh((X @ W_xc) + (H @ W_hc) + b_c)
+        C = F * C + I * C_tilda
+        H = O * torch.tanh(C)
+        Y = (H @ W_hq) + b_q
+        outputs.append(Y)
+    return torch.cat(outputs, dim=0), (H, C)
+
+# 训练和预测
+vocab_size, num_hiddens, device = len(vocab), 256, d2l.try_gpu()
+num_epochs, lr = 500, 1
+model = d2l.RNNModelScratch(len(vocab), num_hiddens, device, get_lstm_params,
+                            init_lstm_state, lstm)
+d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
+
+# * 简洁实现
+num_inputs = vocab_size
+lstm_layer = nn.LSTM(num_inputs, num_hiddens)
+model = d2l.RNNModel(lstm_layer, len(vocab))
+model = model.to(device)
+d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
+```
 
 ### 深度循环神经网络
+浅RNN vs 深RNN
+- 输入 隐层 输出
+- 输入 隐层 隐层 ... 隐层 输出
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120935294.png)
+深度循环神经网络使用多个隐藏层来获得更多非线性
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+batch_size, num_steps = 32, 35
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+
+# * 简洁实现
+vocab_size, num_hiddens, num_layers = len(vocab), 256, 2
+num_inputs = vocab_size
+device = d2l.try_gpu()
+# LSTM类选择2层神经网络，默认为1
+lstm_layer = nn.LSTM(num_inputs, num_hiddens, num_layers)
+model = d2l.RNNModel(lstm_layer, len(vocab))
+model = model.to(device)
+
+# * 训练与预测
+num_epochs, lr = 500, 2
+d2l.train_ch8(model, train_iter, vocab, lr*1.0, num_epochs, device)
+```
 
 ### 双向循环神经网络
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120949906.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411120959829.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121000158.png)
+双向循环神经网络几乎不能做推理，主要作用是对句子做特征提取，因为在做推理时，只能看到过去，看不到未来  
+应用领域：机器翻译，改写，语音
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121004592.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121004891.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 这是一个错误的样例，我们不能用双向循环神经网路来预测语言模型
+# 加载数据
+batch_size, num_steps, device = 32, 35, d2l.try_gpu()
+train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
+# ! 通过设置“bidirective=True”来定义双向LSTM模型
+vocab_size, num_hiddens, num_layers = len(vocab), 256, 2
+num_inputs = vocab_size
+lstm_layer = nn.LSTM(num_inputs, num_hiddens, num_layers, bidirectional=True)
+model = d2l.RNNModel(lstm_layer, len(vocab))
+model = model.to(device)
+# 训练模型
+num_epochs, lr = 500, 1
+d2l.train_ch8(model, train_iter, vocab, lr, num_epochs, device)
+```
 
 ### 机器翻译与数据集
+```python
+import os
+import torch
+from d2l import torch as d2l
+
+# * 下载和预处理数据集
+d2l.DATA_HUB['fra-eng'] = (d2l.DATA_URL + 'fra-eng.zip',
+                           '94646ad1522d915e7b0f9296181140edcf86a4f5')
+
+def read_data_nmt():
+    """载入“英语－法语”数据集"""
+    data_dir = d2l.download_extract('fra-eng')
+    with open(os.path.join(data_dir, 'fra.txt'), 'r',
+             encoding='utf-8') as f:
+        return f.read()
+
+raw_text = read_data_nmt()
+print(raw_text[:75])
+
+# 预处理，用空格代替不间断空格，小写字母替换大写字母。在单词和标点符号之间插入空格
+#@save
+def preprocess_nmt(text):
+    """预处理“英语－法语”数据集"""
+    # 返回一个bool值 判断当前字符是否为标点符号且前一个字符是否为空格
+    def no_space(char, prev_char):
+        return char in set(',.!?') and prev_char != ' '
+
+    # replace 使用空格替换不间断空格
+    # 使用 .lower() 方法将小写字母替换大写字母
+    text = text.replace('\u202f', ' ').replace('\xa0', ' ').lower()
+    # 在单词和标点符号之间插入空格
+    out = [' ' + char if i > 0 and no_space(char, text[i - 1]) else char
+           for i, char in enumerate(text)]
+    return ''.join(out)
+
+text = preprocess_nmt(raw_text)
+print(text[:80])
+
+# * 词元化
+def tokenize_nmt(text, num_examples=None):
+    """词元化“英语－法语”数据数据集"""
+    source, target = [], []
+    for i, line in enumerate(text.split('\n')):
+        if num_examples and i > num_examples:
+            break
+
+        # 将一行中的空格分割开
+        parts = line.split('\t')
+        if len(parts) == 2:
+            source.append(parts[0].split(' '))
+            target.append(parts[1].split(' '))
+    return source, target
+
+source, target = tokenize_nmt(text)
+print(source[:6], target[:6])
+
+# 绘制每个文本序列包含的词元数量的直方图 法语长句子稍稍多一点
+def show_list_len_pair_hist(legend, xlabel, ylabel, xlist, ylist):
+    """绘制列表长度对的直方图"""
+    d2l.set_figsize()
+    _, _, patches = d2l.plt.hist(
+        [[len(l) for l in xlist], [len(l) for l in ylist]])
+    d2l.plt.xlabel(xlabel)
+    d2l.plt.ylabel(ylabel)
+    for patch in patches[1].patches:
+        patch.set_hatch('/')
+    d2l.plt.legend(legend)
+    d2l.plt.show()
+
+show_list_len_pair_hist(['source', 'target'], '# tokens per sequence',
+                        'count', source, target)
+
+# * 词表
+# min_freq 词元出现频率小于2舍弃 特殊词<pad>填充 <bos>句首 <eos>句尾
+src_vocab = d2l.Vocab(source, min_freq=2, reserved_tokens=['<pad>', '<bos>', '<eos>'])
+print(len(src_vocab))
+
+# * 加载数据集
+# 序列样本有一个固定的长度 截断或填充文本序列
+def truncate_pad(line, num_steps, padding_token):
+    """截断或填充文本序列"""
+    if len(line) > num_steps:
+        return line[:num_steps]  # 截断
+    return line + [padding_token] * (num_steps - len(line))  # 填充
+
+print(truncate_pad(src_vocab[source[0]], 10, src_vocab['<pad>']))
+
+# 转换小批量
+def build_array_nmt(lines, vocab, num_steps):
+    """将机器翻译的文本序列转换成小批量"""
+    # 将句子 l 中的单词转为词汇表 vocab 中对应的索引，最终得到一个包含词索引序列的列表
+    lines = [vocab[l] for l in lines]
+    # 每个句子末尾添加一个结束符 <eos>，方便模型识别句子结束
+    lines = [l + [vocab['<eos>']] for l in lines]
+    # 保持固定长度
+    array = torch.tensor([truncate_pad(
+        l, num_steps, vocab['<pad>']) for l in lines])
+    # 除去填充的实际长度
+    valid_len = (array != vocab['<pad>']).type(torch.int32).sum(1)
+    return array, valid_len
+
+# * 训练模型
+def load_data_nmt(batch_size, num_steps, num_examples=600):
+    """返回翻译数据集的迭代器和词表"""
+    text = preprocess_nmt(read_data_nmt())
+    source, target = tokenize_nmt(text, num_examples)
+    src_vocab = d2l.Vocab(source, min_freq=2,
+                          reserved_tokens=['<pad>', '<bos>', '<eos>'])
+    tgt_vocab = d2l.Vocab(target, min_freq=2,
+                          reserved_tokens=['<pad>', '<bos>', '<eos>'])
+    src_array, src_valid_len = build_array_nmt(source, src_vocab, num_steps)
+    tgt_array, tgt_valid_len = build_array_nmt(target, tgt_vocab, num_steps)
+    data_arrays = (src_array, src_valid_len, tgt_array, tgt_valid_len)
+    data_iter = d2l.load_array(data_arrays, batch_size)
+    return data_iter, src_vocab, tgt_vocab
+
+train_iter, src_vocab, tgt_vocab = load_data_nmt(batch_size=2, num_steps=8)
+for X, X_valid_len, Y, Y_valid_len in train_iter:
+    print('X:', X.type(torch.int32))
+    print('X的有效长度:', X_valid_len)
+    print('Y:', Y.type(torch.int32))
+    print('Y的有效长度:', Y_valid_len)
+    break
+```
+
+### 编码器-解码器结构
+编码器与解码器：
+- 编码器：提取特征，转换成中间形式
+- 解码器：将中间形式转换成我们想要的形式
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121502650.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121504532.png)
+这里的Decoder也可以处理额外输入从而输出
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121504186.png)
+总结：  
+使用编码器-解码器结构的模型，编码器负责表示输入，解码器负责输出
+```python
+from torch import nn
+
+# * 编码器
+class Encoder(nn.Module):
+    """编码器-解码器架构的基本编码器接口"""
+    def __init__(self, **kwargs):
+        super(Encoder, self).__init__(**kwargs)
+
+    def forward(self, X, *args):
+        # raise NotImplementedError 来表示函数的具体实现部分暂时空缺
+        raise NotImplementedError
+
+# * 解码器
+class Decoder(nn.Module):
+    """编码器-解码器架构的基本解码器接口"""
+    def __init__(self, **kwargs):
+        super(Decoder, self).__init__(**kwargs)
+
+    def init_state(self, enc_outputs, *args):
+        raise NotImplementedError
+
+    def forward(self, X, state):
+        raise NotImplementedError
+
+# * 合并编码器和解码器
+class EncoderDecoder(nn.Module):
+    """编码器-解码器架构的基类"""
+    def __init__(self, encoder, decoder, **kwargs):
+        super(EncoderDecoder, self).__init__(**kwargs)
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, enc_X, dec_X, *args):
+        enc_outputs = self.encoder(enc_X, *args)
+        dec_state = self.decoder.init_state(enc_outputs, *args)
+        return self.decoder(dec_X, dec_state)
+```
 
 ### 序列到序列学习(seq2seq)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121520546.png)
+Encoder可以用双向(提取特征)，但Decoder一般用单向(预测)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121529354.png)
+RNN（解码器）的隐藏状态初始化来源于另一个RNN（编码器），用编码器的隐藏状态为依据，以一句话从开头预测到末尾
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121530913.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121539447.png)
+**n-gram**是一个包含 n 个连续词 的片段  
+e.g. "I love natural language processing."  
+我们可以将其分解成不同的 n-gram，如下：
+- 1-gram（Unigram）： "I", "love", "natural", "language", "processing"
+- 2-gram（Bigram）："I love", "love natural", "natural language", "language processing"
+- 以此类推
+- $ p_n $就是计算标签和预测在n-gram下的匹配程度
+
+**BLEU实现细节**：  
+- 如果预测过短则较容易匹配成功，因此会有较大的惩罚
+- $ p_n $小于1，则n越大， $ 2^n $ 就越大， $ p_n^{1/2^n} $就越大，长匹配拥有较高权重
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121541309.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121556189.png)
+```python
+import collections
+import math
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 编码器
+class Seq2SeqEncoder(d2l.Encoder):
+    """用于序列到序列学习的循环神经网络编码器"""
+    def __init__(self, vocab_size, embed_size, num_hiddens, num_layers,
+                 dropout=0, **kwargs):
+        super(Seq2SeqEncoder, self).__init__(**kwargs)
+        # 嵌入层
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        self.rnn = nn.GRU(embed_size, num_hiddens, num_layers, dropout=dropout)
+
+    def forward(self, X, *args):
+        # 输出'X'的形状：(batch_size,num_steps,embed_size)
+        X = self.embedding(X)
+        # 在循环神经网络模型中，第一个轴对应于时间步
+        X = X.permute(1, 0, 2)
+        # 如果未提及状态，则默认为0
+        # output是每个时间步最后一层RNN的输出，state包含最后一个时间步每层RNN的输出
+        output, state = self.rnn(X)
+        # output的形状:(num_steps,batch_size,num_hiddens)
+        # state的形状:(num_layers,batch_size,num_hiddens)
+        return output, state
+
+encoder = Seq2SeqEncoder(vocab_size=10, embed_size=8, num_hiddens=16, num_layers=2)
+# dropout失效
+encoder.eval()
+# (4, 7) batch_size:4 len(seq):7
+X = torch.zeros((4, 7), dtype=torch.long)
+output, state = encoder(X)
+print(output.shape)
+
+# * 解码层
+class Seq2SeqDecoder(d2l.Decoder):
+    """用于序列到序列学习的循环神经网络解码器"""
+    def __init__(self, vocab_size, embed_size, num_hiddens, num_layers,
+                 dropout=0, **kwargs):
+        super(Seq2SeqDecoder, self).__init__(**kwargs)
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        # 这个RNN的输入是由上一个RNN最后一层最后一个时间步的状态和新的输入concat起来的
+        self.rnn = nn.GRU(embed_size + num_hiddens, num_hiddens, num_layers, dropout=dropout)
+        self.dense = nn.Linear(num_hiddens, vocab_size)
+
+    def init_state(self, enc_outputs, *args):
+        # 这里是返回编码器的state
+        return enc_outputs[1]
+
+    def forward(self, X, state):
+        # 输出'X'的形状：(batch_size,num_steps,embed_size) 把时间放在第0维度
+        X = self.embedding(X).permute(1, 0, 2)
+        # 广播context，使其具有与X相同的num_steps
+        # state[-1] 是最后一层最后一个时间步的输出 这个输出综合了前面所有的信息
+        context = state[-1].repeat(X.shape[0], 1, 1)
+        X_and_context = torch.cat((X, context), 2)
+        output, state = self.rnn(X_and_context, state)
+        output = self.dense(output).permute(1, 0, 2)
+        # output的形状:(batch_size,num_steps,vocab_size)
+        # state的形状:(num_layers,batch_size,num_hiddens)
+        return output, state
+
+# 实例化
+decoder = Seq2SeqDecoder(vocab_size=10, embed_size=8, num_hiddens=16, num_layers=2)
+decoder.eval()
+state = decoder.init_state(encoder(X))
+output, state = decoder(X, state)
+print(output.shape, state.shape)
+
+# 通过零值化屏蔽不相关的项
+# 因为为了保持输入句子向量长度一致，句子中有些我们使用了填充，并且记录了有效句子产固定
+def sequence_mask(X, valid_len, value=0):
+    """在序列中屏蔽不相关的项"""
+    # 列数
+    maxlen = X.size(1)
+    # 看mask的每一列值是否小于有效长度 e.g. arange(3)生成0 1 2  valid_len=2  0<2 1<2 2!<2 返回mask 110
+    # None 方便mask进行广播
+    mask = torch.arange((maxlen), dtype=torch.float32,
+                        device=X.device)[None, :] < valid_len[:, None]
+    # 将 mask 中 False 的位置对应的 X 中项设置为 value，实现掩盖  ~ 按位取反
+    X[~mask] = value
+    return X
+
+X = torch.tensor([[1, 2, 3], [4, 5, 6]])
+print(sequence_mask(X, torch.tensor([1, 2])))
+
+X = torch.ones(2, 3, 4)
+print(sequence_mask(X, torch.tensor([1, 2]), value=-1))
+
+# 通过扩展softmax交叉熵损失函数来屏蔽不相关的预测，不需要计算无效的预测的损失
+class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
+    """带遮蔽的softmax交叉熵损失函数"""
+    # pred的形状：(batch_size,num_steps,vocab_size)
+    # label的形状：(batch_size,num_steps)
+    # valid_len的形状：(batch_size,)
+    def forward(self, pred, label, valid_len):
+        # 跟label形状一致的全1矩阵
+        weights = torch.ones_like(label)
+        # 有效1保留 其他是0
+        weights = sequence_mask(weights, valid_len)
+        # 损失值不求平均 得到一个列表 好后续屏蔽
+        self.reduction='none'
+        # 调用父类的CrossEntropyLoss forward方法 得到未加权的损失
+        unweighted_loss = super(MaskedSoftmaxCELoss, self).forward(
+            pred.permute(0, 2, 1), label)
+        # 应用屏蔽，得到加权平均损失
+        weighted_loss = (unweighted_loss * weights).mean(dim=1)
+        return weighted_loss
+
+loss = MaskedSoftmaxCELoss()
+print(torch.ones(3, 4, 10))
+print(torch.ones(3, 4))
+# pred 得到的是每个时间步在vocab上的概率
+print(loss(torch.ones(3, 4, 10), torch.ones((3, 4), dtype=torch.long), torch.tensor([4, 2, 0])))
+
+# * 训练
+def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
+    """训练序列到序列模型"""
+    def xavier_init_weights(m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_uniform_(m.weight)
+        if type(m) == nn.GRU:
+            for param in m._flat_weights_names:
+                if "weight" in param:
+                    nn.init.xavier_uniform_(m._parameters[param])
+
+    net.apply(xavier_init_weights)
+    net.to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    loss = MaskedSoftmaxCELoss()
+    net.train()
+    animator = d2l.Animator(xlabel='epoch', ylabel='loss',
+                     xlim=[10, num_epochs])
+    for epoch in range(num_epochs):
+        timer = d2l.Timer()
+        metric = d2l.Accumulator(2)  # 训练损失总和，词元数量
+        for batch in data_iter:
+            optimizer.zero_grad()
+            X, X_valid_len, Y, Y_valid_len = [x.to(device) for x in batch]
+
+            # 起始符拼接在目标序列的开头，同时去掉目标序列的最后一个词
+            bos = torch.tensor([tgt_vocab['<bos>']] * Y.shape[0],
+                          device=device).reshape(-1, 1)
+            dec_input = torch.cat([bos, Y[:, :-1]], 1)  # 强制教学
+
+            Y_hat, _ = net(X, dec_input, X_valid_len)
+            l = loss(Y_hat, Y, Y_valid_len)
+            l.sum().backward()      # 损失函数的标量进行“反向传播”
+            d2l.grad_clipping(net, 1)
+            num_tokens = Y_valid_len.sum()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l.sum(), num_tokens)
+        if (epoch + 1) % 10 == 0:
+            animator.add(epoch + 1, (metric[0] / metric[1],))
+    print(f'loss {metric[0] / metric[1]:.3f}, {metric[1] / timer.stop():.1f} '
+        f'tokens/sec on {str(device)}')
+
+embed_size, num_hiddens, num_layers, dropout = 32, 32, 2, 0.1
+batch_size, num_steps = 64, 10
+lr, num_epochs, device = 0.005, 300, d2l.try_gpu()
+
+train_iter, src_vocab, tgt_vocab = d2l.load_data_nmt(batch_size, num_steps)
+encoder = Seq2SeqEncoder(len(src_vocab), embed_size, num_hiddens, num_layers,
+                        dropout)
+decoder = Seq2SeqDecoder(len(tgt_vocab), embed_size, num_hiddens, num_layers,
+                        dropout)
+net = d2l.EncoderDecoder(encoder, decoder)
+train_seq2seq(net, train_iter, lr, num_epochs, tgt_vocab, device)
+
+# * 预测
+# src_sentence：给的句子 src_vocab：给的vocab tgt_vocab：目标vocab 最大长度：num_steps
+def predict_seq2seq(net, src_sentence, src_vocab, tgt_vocab, num_steps,
+                    device, save_attention_weights=False):
+    """序列到序列模型的预测"""
+    # 在预测时将net设置为评估模式
+    net.eval()
+    src_tokens = src_vocab[src_sentence.lower().split(' ')] + [
+        src_vocab['<eos>']]
+    enc_valid_len = torch.tensor([len(src_tokens)], device=device)
+    src_tokens = d2l.truncate_pad(src_tokens, num_steps, src_vocab['<pad>'])
+    # 添加批量轴
+    enc_X = torch.unsqueeze(
+        torch.tensor(src_tokens, dtype=torch.long, device=device), dim=0)
+    enc_outputs = net.encoder(enc_X, enc_valid_len)
+    dec_state = net.decoder.init_state(enc_outputs, enc_valid_len)
+    # 添加批量轴
+    dec_X = torch.unsqueeze(torch.tensor(
+        [tgt_vocab['<bos>']], dtype=torch.long, device=device), dim=0)
+    output_seq, attention_weight_seq = [], []
+    for _ in range(num_steps):
+        Y, dec_state = net.decoder(dec_X, dec_state)
+        # 我们使用具有预测最高可能性的词元，作为解码器在下一时间步的输入
+        dec_X = Y.argmax(dim=2)
+        pred = dec_X.squeeze(dim=0).type(torch.int32).item()
+        # 保存注意力权重（稍后讨论）
+        if save_attention_weights:
+            attention_weight_seq.append(net.decoder.attention_weights)
+        # 一旦序列结束词元被预测，输出序列的生成就完成了
+        if pred == tgt_vocab['<eos>']:
+            break
+        output_seq.append(pred)
+    return ' '.join(tgt_vocab.to_tokens(output_seq)), attention_weight_seq
+
+# * 预测序列的评估
+def bleu(pred_seq, label_seq, k):  #@save
+    """计算BLEU"""
+    pred_tokens, label_tokens = pred_seq.split(' '), label_seq.split(' ')
+    len_pred, len_label = len(pred_tokens), len(label_tokens)
+    score = math.exp(min(0, 1 - len_label / len_pred))
+    for n in range(1, k + 1):
+        num_matches, label_subs = 0, collections.defaultdict(int)
+        for i in range(len_label - n + 1):
+            # label_subs存了一个字典 记录n-gram的频率
+            label_subs[' '.join(label_tokens[i: i + n])] += 1
+        for i in range(len_pred - n + 1):
+            # 检查预测n-gram对应的label字典频次是否大于0
+            if label_subs[' '.join(pred_tokens[i: i + n])] > 0:
+                num_matches += 1
+                # label字典批次减去1 防止重复匹配
+                label_subs[' '.join(pred_tokens[i: i + n])] -= 1
+        score *= math.pow(num_matches / (len_pred - n + 1), math.pow(0.5, n))
+    return score
+
+engs = ['go .', "i lost .", 'he\'s calm .', 'i\'m home .']
+fras = ['va !', 'j\'ai perdu .', 'il est calme .', 'je suis chez moi .']
+for eng, fra in zip(engs, fras):
+    translation, attention_weight_seq = predict_seq2seq(
+        net, eng, src_vocab, tgt_vocab, num_steps, device)
+    print(f'{eng} => {translation}, bleu {bleu(translation, fra, k=2):.3f}')
+```
 
 ### 束搜索
+序列生成方法：
+- **贪心搜索**：是最快的，但不一定是最优的
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122147152.png)
+- **穷举搜索**：计算所有可能的序列的概率，选择最好的
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122148274.png)
+- **束搜索**：一种折中的办法，选择每个time_step最好的k个(不是在两个分支中分别选最好的，而是两个放在一起排序最好的两个)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122151473.png)
+为了避免总是选择短句子(概率越乘越小)，外面乘(1/L^alpha)，补偿长句子
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122159500.png)
+
+总结：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122202559.png)
 
 ## Chapter 9 : 注意力机制
 ### 注意力提示
