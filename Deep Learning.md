@@ -3989,11 +3989,159 @@ for eng, fra in zip(engs, fras):
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411122202559.png)
 
 ## Chapter 9 : 注意力机制
-### 注意力提示
+### 注意力机制
+不随意->不经意 随意->故意
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131558108.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131602033.png)
 
-### 注意力汇聚：Nadaraya-Watson核回归
+**注意力机制示例**：
+在侦探工作中，我们经常面临大量的线索，每个线索都由一个属性（key）和其价值（value）组成。
+这些线索可能包括目击者证词、凶器、不在场证明等，
+而它们的价值可能各不相同，有的线索价值可能是正的，有的可能是负的，因为某些线索可能会误导调查。
+
+如果我们不采用注意力机制，我们可能需要对所有线索进行平等的调查，这可能导致我们在不重要的线索上花费过多的时间和精力。
+数学上，这种做法相当于将所有线索的价值简单相加，由于价值有正有负，最终的总价值可能并不高，无法有效指导我们的调查。
+
+然而，通过使用注意力机制，我们可以更加智能地处理这些线索。首先，我们会计算每个线索的属性（key）与我们当前关注的问题（query）之间的相关性。
+例如，凶器和目击者证词很可能与破案有很高的相关性。然后，我们会将那些与问题高度相关的线索的价值（value）进行加权求和，
+这样不仅可以保证我们集中精力在最重要的线索上，而且可以提高我们得到有价值信息的可能性。
+
+### 注意力汇聚: Nadaraya-Watson核回归
+K是衡量x和xi距离的函数，相似度计算函数
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131606622.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131610343.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131611164.png)
+> w是一个标量
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131612560.png)
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 生成数据集
+n_train = 50
+x_train, _ = torch.sort(torch.rand(n_train) * 5)
+
+def f(x):
+    return 2 * torch.sin(x) + x**0.8
+
+# 训练样本输出
+y_train = f(x_train) + torch.normal(0.0, 0.5, (n_train,))
+# 测试样本
+x_test = torch.arange(0, 5, 0.1)
+# 测试样本真实值
+y_truth = f(x_test)
+n_test = len(x_test)
+print(n_test)
+
+# 绘制训练样本
+def plot_kernel_reg(y_hat): # 训练样本圆圈 
+    d2l.plot(x_test, [y_truth, y_hat], 'x', 'y', legend=['Truth', 'Pred'],
+             xlim=[0, 5], ylim=[-1, 5])
+    d2l.plt.plot(x_train, y_train, 'o', alpha=0.5)
+    d2l.plt.show()
+
+# * 平均汇聚
+# 计算所有训练样本输出的平均值
+y_hat = torch.repeat_interleave(y_train.mean(), n_test)
+plot_kernel_reg(y_hat)
+
+# * 非参数注意力汇聚
+# X_repeat shape(n_test, n_train)
+X_repeat = x_test.repeat_interleave(n_train).reshape((-1, n_train))
+# attention_weights shape(n_test, n_train) 每个测试样本对每个训练样本都有不同的相似度
+attention_weights = nn.functional.softmax(-(X_repeat - x_train)**2)
+# 对y_train进行加权 y_hat shape(n_test, 1)
+y_hat = torch.matmul(attention_weights, y_train)
+plot_kernel_reg(y_hat)
+
+# 注意力权重
+# 距离测试样本近的训练样本获得较大的权重
+d2l.show_heatmaps(attention_weights.unsqueeze(0).unsqueeze(0),
+                  xlabel='Sorted training inputs',
+                  ylabel='Sorted testing inputs')
+d2l.plt.show()
+
+# * 带参数注意力汇聚
+# 批量矩阵乘法
+X = torch.ones((2, 1, 4))
+Y = torch.ones((2, 4, 6))
+print(torch.bmm(X, Y).shape)
+
+weights = torch.ones((2, 10)) * 0.1
+values = torch.arange(20.0).reshape((2, 10))
+print(torch.bmm(weights.unsqueeze(1), values.unsqueeze(-1)))
+
+# 定义模型
+class NWKernelRegression(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.w = nn.Parameter(torch.rand((1,), requires_grad=True))
+
+    def forward(self, queries, keys, values):
+        # queries和attention_weights的形状为(查询个数，“键－值”对个数)
+        queries = queries.repeat_interleave(keys.shape[1]).reshape((-1, keys.shape[1]))
+        # 多乘了一个标量w
+        self.attention_weights = nn.functional.softmax(
+            -((queries - keys) * self.w)**2 / 2, dim=1)
+        # values的形状为(查询个数，“键－值”对个数)
+        return torch.bmm(self.attention_weights.unsqueeze(1),
+                         values.unsqueeze(-1)).reshape(-1)
+
+# 训练
+# X_tile的形状:(n_train，n_train)，每一行都包含着相同的训练输入
+X_tile = x_train.repeat((n_train, 1))
+# Y_tile的形状:(n_train，n_train)，每一行都包含着相同的训练输出
+Y_tile = y_train.repeat((n_train, 1))
+# keys的形状:('n_train'，'n_train'-1)
+# ! torch.eye() 创建单位矩阵
+keys = X_tile[(1 - torch.eye(n_train)).type(torch.bool)].reshape((n_train, -1))
+# values的形状:('n_train'，'n_train'-1)
+values = Y_tile[(1 - torch.eye(n_train)).type(torch.bool)].reshape((n_train, -1))
+
+net = NWKernelRegression()
+loss = nn.MSELoss(reduction='none') # 使用均方误差
+trainer = torch.optim.SGD(net.parameters(), lr=0.5)
+animator = d2l.Animator(xlabel='epoch', ylabel='loss', xlim=[1, 5])
+
+for epoch in range(5):
+    trainer.zero_grad()
+    l = loss(net(x_train, keys, values), y_train)
+    l.sum().backward()
+    trainer.step()
+    print(f'epoch {epoch + 1}, loss {float(l.sum()):.6f}')
+    animator.add(epoch + 1, float(l.sum()))
+
+# keys的形状:(n_test，n_train)，每一行包含着相同的训练输入（例如，相同的键）
+keys = x_train.repeat((n_test, 1))
+# value的形状:(n_test，n_train)
+values = y_train.repeat((n_test, 1))
+y_hat = net(x_test, keys, values).unsqueeze(1).detach()
+plot_kernel_reg(y_hat)
+
+# w就像一个惩罚因子，越靠近测试样本，(queries - keys)越小，惩罚越小，反之惩罚越大
+# 从而导致，靠近测试样本的权重更加大，权重更加集中，导致图像不平滑
+d2l.show_heatmaps(net.attention_weights.unsqueeze(0).unsqueeze(0),
+                  xlabel='Sorted training inputs',
+                  ylabel='Sorted testing inputs')
+```
 
 ### 注意力评分
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131813246.png)
+这里的k，v不限制维度
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131829630.png)
+等价于将 query 和 key 合并起来变成一个长度为 k+q 的向量，然后将其输入到一个隐藏层大小为 h （ h 是一个超参数），输出大小为 1 的但隐藏层的 MLP（没有偏置项），最终得到输出
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411131829631.png)
+除以根号 d 的目的是为了降低对 ki 的长度的敏感度，使得无论向量的长度如何，点积的方差在不考虑向量长度的情况下仍然是 1  
+总结
+1. 注意力分数是 query 和 key 的相似度（没有经过 normalize ），注意力权重是注意力分数的 softmax 结果（ 0 到 1 之间的数）
+2. 两种常见的注意力分数的计算
+   - 有参数的版本：将 query 和 key 合并起来进入一个单隐藏层单输出的 MLP（在 query 和 key 向量长度不同的情况下）
+   - 无参数的版本：直接将 query 和 key 做内积（在 query 和 key 向量长度一定的情况下），效率更高
+
+```python
+
+```
 
 ### Bahdanau 注意力
 
