@@ -459,6 +459,20 @@ d.backward()
 print(a.grad == d / a)
 ```
 
+### 梯度下降
+***梯度下降的方法***：
+- 批量梯度下降
+  - 每次计算整个训练集的梯度，进行参数更新
+  - 优点：更新梯度方向准确
+  - 缺点：迭代慢，计算速度慢，计算成本大，可能陷入局部最优解
+- 随机梯度下降
+  - 每次计算某一个样本的梯度，进行参数更新
+  - 优点：迭代速度块，迭代具有震荡属性，因此可以跳出局部最优解
+  - 缺点：更新方向不稳定，可能永远不会收敛
+- 小批量梯度下降
+  - 每次计算一个batch大小样本的梯度，进行参数更新
+  - 优点：综合上述两种方法的优点，更新方向较稳定，迭代速度较快，可跳出局部最优解
+
 ## Chapter 2 ：线性神经网络
 ### 线性回归
 *显示解*
@@ -3718,6 +3732,61 @@ class EncoderDecoder(nn.Module):
         return self.decoder(dec_X, dec_state)
 ```
 
+### 词嵌入(Word Embedding)
+词嵌入技术可以将单词转为方便神经网络处理的固定长度的向量
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142028893.png)
+区别与One-hot编码，词嵌入不仅可以缩小特征维数，还可以反映语义相近的词的联系
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142030535.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033284.png)
+例如，词嵌入向量不仅可以反应 king & queen   and  man & woman之间的相似性，还可以反应king<-->man 与 queen <--> woman 之间的语义关联
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033081.png)
+通过不同的词嵌入算法，可以训练得到不同的嵌入矩阵
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142036729.png)
+例如，将 我喜欢学习数学 先切词，再用独热编码向量化成V
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142037938.png)
+将 矩阵V 和 特定的词嵌入算法训练的嵌入矩阵E 相乘，就可以得到句子的嵌入向量
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142041871.png)
+
+### word2vec算法
+word2vec算法是一种词嵌入算法，分为CBOW连续词袋模型和skip-gram跳字模型两种实现方式
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142108773.png)
+- CBOW模型根据上下文词汇，预测目标词汇
+  - 先设置好窗口长度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142110523.png)
+  - 例如，窗口长度为2，模型需要通过窗口内词语，预测目标词
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142113571.png)
+  - 输入周围两个词语，预测目标词语
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142115459.png)
+  - 蓝框就是嵌入矩阵，N单词个数 V词向量的维度，通过嵌入矩阵将one-hot转为词向量，可以视作嵌入矩阵有一行是We
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142118381.png)
+  - embedding层的输出结果是上下文语义信息的平均
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142122213.png)
+  - 通过一个没有激活函数的线性层，转换词元总数的维度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142124369.png)
+  - 再通过softmax，转化为每个词的概率值
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142127592.png)
+- skip-gram模型根据目标词汇，预测上下文
+  - 同理，先设置好窗口长度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142131184.png)
+  - 例如，窗口长度为2，模型需要通过目标词，预测窗口内词语
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142132204.png)
+  - 原理，使语义相近的上下文词向量靠近，使语义较远的词向量远离，从而捕获语义关系
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142133154.png)
+  - 语义相近的数学表示：词向量点积尽可能大
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142135499.png)
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142136726.png)
+  - skip-gram模型
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142137716.png)
+  - in_embedding是skip模型的输出
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142138868.png)
+  - 数据集的设置
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142141318.png)
+  - 损失函数：最大化中心词和上下文词对的概率
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142151665.png)
+  - 负采样优化：避免softmax耗费资源，随机选择一些非上下文词作为负样本，目标最小化中心词和这些噪声词的相似度，这里的uv是词向量
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142154043.png)
+- 二者都最终目标都是为了迭代出词向量字典(嵌入矩阵E)
+
 ### 序列到序列学习(seq2seq)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121520546.png)
 Encoder可以用双向(提取特征)，但Decoder一般用单向(预测)
@@ -4239,12 +4308,279 @@ d2l.plt.show()
 ```
 
 ### Bahdanau 注意力
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141446068.png)
+- 在机器翻译的时候，每个生成的词可能相关于源句子中不同的词
+- 在语言翻译的时候，中文和英文之间的翻译可能会存在倒装，但是可能在西方语言之间，相同意思的句子中的词的位置可能近似地是对应的，所以在翻译句子的某个部位的时候，只需要去看源句子中对应的位置就可以了
+- 然而，Seq2Seq 模型中不能对此直接建模。Seq2Seq 模型中编码器向解码器中传递的信息是编码器最后时刻的隐藏状态，
+  解码器只用到了编码器最后时刻的隐藏状态作为初始化，从而进行预测，所以解码器看不到编码器最后时刻的隐藏状态之前的其他隐藏状态
+  原句子中的所有信息虽然都包含在这个隐藏状态中，但是要想在翻译某个词的时候，每个解码步骤使用编码相同的上下文变量，但是并非所有输入（源）词元都对解码某个词元有用。
+  将注意力关注在源句子中的对应位置，这也是将注意力机制应用在Seq2Seq 模型中的动机
 
-### 多头注意力
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141453300.png)
+- 编码器对每次词的输出（隐藏状态）作为 key 和 value，序列中有多少个词元，就有多少个 key-value 对，它们是等价的，
+  都是第 i 个词元的 RNN 的输出
+- 解码器 RNN 对上一个词的预测输出（隐藏状态）是 query（假设 RNN 的输出都是在同一个语义空间中，
+  所以在解码器中对某个词元进行解码的时候，需要用到的是 RNN 的输出，而不能使用词嵌入之后的输入，
+  因为  key 和 value 也是 RNN 的输出，所以 key 和 query 做匹配的时候，最好都使用 RNN 的输出，
+  这样能够保证它们差不多在同一个语义空间）
+- 注意力的输出和下一个词的词嵌入合并进入 RNN 解码器 
+- 对 Seq2Seq 的改进之处在于：之前 Seq2Seq 的 RNN 解码器的输入是 RNN 编码器最后时刻的隐藏状态，
+  加入注意力机制之后的模型相当于是对所有的词进行了加权平均，根据翻译的词的不同使用不同时刻的 RNN 编码器输出的隐藏状态
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141457013.png)
+用编码器建立索引，用解码器定位关注点
+key和value是编码器对每一个词的RNN输出
+query是解码器对上一个词的预测输出
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 定义注意力解码器
+# 用来画东西(不重要)
+class AttentionDecoder(d2l.Decoder):
+    """带有注意力机制解码器的基本接口"""
+    def __init__(self, **kwargs):
+        super(AttentionDecoder, self).__init__(**kwargs)
+
+    @property
+    def attention_weights(self):
+        raise NotImplementedError
+
+class Seq2SeqAttentionDecoder(AttentionDecoder):
+    def __init__(self, vocab_size, embed_size, num_hiddens, num_layers, dropout=0, **kwargs):
+        super(Seq2SeqAttentionDecoder, self).__init__(**kwargs)
+        # key value query都是隐藏状态
+        self.attention = d2l.AdditiveAttention(num_hiddens, num_hiddens, num_hiddens, dropout)
+        # embedding 层将输入的单词 ID 映射到嵌入向量，用于表示输入单词的特征
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        # 输入维度是嵌入向量和context的拼接
+        self.rnn = nn.GRU(embed_size + num_hiddens, num_hiddens, num_layers, dropout=dropout)
+        # GRU到词汇表，方便计算概率
+        self.dense = nn.Linear(num_hiddens, vocab_size)
+    
+    def init_state(self, enc_outputs, enc_valid_lens, *args):
+        # 初始化解码器的状态信息。
+        # enc_outputs 包含编码器的输出 outputs 和隐藏状态 hidden_state。
+        # 返回解码器的初始状态，包含：编码器的输出、编码器的隐藏状态以及有效长度。
+
+        # outputs的形状为(batch_size，num_steps，num_hiddens).
+        # hidden_state的形状为(num_layers，batch_size，num_hiddens)
+        outputs, hidden_state = enc_outputs
+        return (outputs.permute(1, 0, 2), hidden_state, enc_valid_lens)
+
+    # X 是解码器的输入  state 是初始状态
+    def forward(self, X, state):
+        # enc_outputs的形状为(batch_size,num_steps,num_hiddens).
+        # hidden_state的形状为(num_layers,batch_size, num_hiddens)
+        enc_outputs, hidden_state, enc_valid_lens = state
+        # 输出X的形状为(num_steps,batch_size,embed_size)
+        X = self.embedding(X).permute(1, 0, 2)
+        outputs, self._attention_weights = [], []
+
+        for x in X: # 取一个时间步
+            # 第一个时间步的query是编码器最后一层最后一个时间步的输出，后面的query是当前时间步的rnn输出
+            # hidden_state[-1] 表示把第0维度最后一个取出来(也就是编码器最后一层的状态)
+            # 以下使用的是切片操作，自动去掉了第0维度；若使用索引操作hidden_stat[-1:]，会保留第0维度
+            # query的形状为(batch_size,1,num_hiddens)
+            query = torch.unsqueeze(hidden_state[-1], dim=1)
+
+            # 这里的key和value都是enc_outputs(batch_size,num_steps,num_hiddens)
+            # enc_valid_lens告诉了我们第i个句子RNN输出的有效位数，句子中被pad掉的是无效的，不关注
+            # context的形状为(batch_size,1,num_hiddens)
+            context = self.attention(query, enc_outputs, enc_outputs, enc_valid_lens)
+
+            # 将上下文向量与目标在特征维度上连结
+            # (batch_size, 1, embed_size + num_hiddens)
+            x = torch.cat((context, torch.unsqueeze(x, dim=1)), dim=-1)
+
+            # 将x变形为(1,batch_size,embed_size+num_hiddens)
+            # 得到了新的最后一层隐藏层状态，作为下一时间步的query
+            out, hidden_state = self.rnn(x.permute(1, 0, 2), hidden_state)
+            outputs.append(out)
+            self._attention_weights.append(self.attention.attention_weights)
+        
+        # 全连接层变换后，outputs的形状为
+        # (num_steps,batch_size,vocab_size)
+        outputs = self.dense(torch.cat(outputs, dim=0))
+        return outputs.permute(1, 0, 2), [enc_outputs, hidden_state, enc_valid_lens]
+
+    @property
+    def attention_weights(self):
+        return self._attention_weights
+
+# 测试
+encoder = d2l.Seq2SeqEncoder(vocab_size=10, embed_size=8, num_hiddens=16, num_layers=2)
+encoder.eval()
+decoder = Seq2SeqAttentionDecoder(vocab_size=10, embed_size=8, num_hiddens=16, num_layers=2)
+decoder.eval()
+X = torch.zeros((4, 7), dtype=torch.long)  # (batch_size,num_steps)
+state = decoder.init_state(encoder(X), None)
+output, state = decoder(X, state)
+print(output.shape, len(state), state[0].shape, len(state[1]), state[1][0].shape)   
+
+# * 训练
+embed_size, num_hiddens, num_layers, dropout = 32, 32, 2, 0.1
+batch_size, num_steps = 64, 10
+lr, num_epochs, device = 0.005, 250, d2l.try_gpu()
+
+train_iter, src_vocab, tgt_vocab = d2l.load_data_nmt(batch_size, num_steps)
+encoder = d2l.Seq2SeqEncoder(
+    len(src_vocab), embed_size, num_hiddens, num_layers, dropout)
+decoder = Seq2SeqAttentionDecoder(
+    len(tgt_vocab), embed_size, num_hiddens, num_layers, dropout)
+net = d2l.EncoderDecoder(encoder, decoder)
+d2l.train_seq2seq(net, train_iter, lr, num_epochs, tgt_vocab, device)
+
+engs = ['go .', "i lost .", 'he\'s calm .', 'i\'m home .']
+fras = ['va !', 'j\'ai perdu .', 'il est calme .', 'je suis chez moi .']
+for eng, fra in zip(engs, fras):
+    translation, dec_attention_weight_seq = d2l.predict_seq2seq(
+        net, eng, src_vocab, tgt_vocab, num_steps, device, True)
+    print(f'{eng} => {translation}, ', f'bleu {d2l.bleu(translation, fra, k=2):.3f}')
+
+attention_weights = torch.cat([step[0][0][0] for step in dec_attention_weight_seq], 0).reshape((
+    1, 1, -1, num_steps))
+
+# 加上一个包含序列结束词元
+d2l.show_heatmaps(
+    attention_weights[:, :, :, :len(engs[-1].split()) + 1].cpu(),
+    xlabel='Key positions', ylabel='Query positions')
+d2l.plt.show()
+```
 
 ### 自注意力和位置编码
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141634940.png)
+- 给定序列是一个长为 n 的序列，每个 xi 是一个长为 d 的向量
+- 自注意力将 xi 同时作为 key 、value 和 query ，以此来对序列抽取特征
+- 基本上可以认为给定一个序列，会对序列中的每一个元素进行输出，也就是说，每个查询都会关注所有的键-值对并生成一个注意力输出
+- 自注意力之所以叫做自注意力，是因为 key，value，query 都是来自于自身，xi 既作为 key ，又作为 value ，同时还作为 query （self-attention 中的 self 所强调的是  key，value，query 的取法）
+
+Self-Attention的并行性很好
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141635469.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141700461.png)
+- 位置编码不是将位置信息加入到模型中，一旦位置信息加入到模型中，会出现各种问题（比如在 CNN 中就需要看一个比较长的序列，RNN 中会降低模型的并行度）
+- P 中的每个元素根据对应的 X 中元素位置的不同而不同
+- 位置编码矩阵P和X形状一致，直接加到X上
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141705407.png)
+- X 轴横坐标表示 不同样本， Y 轴表示P矩阵不同特征相对应位置的值
+- 偶数列是sin函数，奇数列是cos函数，频率不一样
+- 特征与特征之间，样本与样本之间加的位置信息不一样
+- P 实际上是对每一个样本（row）、每一个维度（dimension）添加一点不一样的值，使得模型能够分辨这种细微的差别，作为位置信息
+- 这种方式跟之前的方式的不同之处在于，之前是将位置信息放进模型中或者将位置信息与数据分开然后进行拼接（concat），位置编码是直接将位置信息加入到了数据中，这样做的好处是不改变模型和数据的大小，缺点是需要模型对于 P 中元素的细微信息进行辨认，取决于模型是否能够有效地使用 P 中的位置信息
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141711239.png)
+- X 轴表示特征 Y 轴表示样本
+- 可以认为是对每一行的位置信息进行了编码，将第 i 个样本用一个长为 d 的向量进行编码
+- 这里和计算机的二进制编码有一点不同，最前面的维度变化频率比较高，越到后面变化频率越来越慢
+- 核心思想是对序列中的第 i 个样本，给定长为 d 的独一无二的位置信息，然后加入到数据中作为自编码输入，使得模型能够看到数据的位置信息
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141715801.png)
+为什么要使用 sin 函数和 cos 函数？
+- 编码的是一个相对位置信息，位置位于 i + σ 处的位置编码可以线性投影位置 i 处的位置编码来表示，
+  也就是说位置信息和绝对位置 i 无关，只是和相对位置 σ 有关
+- 投影矩阵和序列中的位置 i 是无关的，但是和 j 是相关的（和 dimension 的信息是相关的），意味着在一个序列中，假设一个词出现在另外一个词两个或者三个位置的时候，不管这对词出现在序列中的什么位置，对于位置信息来讲，都是可以通过一个同样的线性变换查找出来的
+- 相对来讲，这样编码的好处在于模型能够更加关注相对的位置信息，而不是关注一个词出现在一个句子中的绝对位置
+
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411141714642.png)
+```python
+import math
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 自注意力
+num_hiddens, num_heads = 100, 5
+attention = d2l.MultiHeadAttention(num_hiddens, num_hiddens, num_hiddens,
+                                   num_hiddens, num_heads, 0.5)
+attention.eval()
+
+batch_size, num_queries, valid_lens = 2, 4, torch.tensor([3, 2])
+X = torch.ones((batch_size, num_queries, num_hiddens))
+print(attention(X, X, X, valid_lens).shape)
+
+# * 位置编码
+class PositionalEncoding(nn.Module):
+    """位置编码"""
+    # max_len处理的最大序列长度 num_hiddens就是每个位置的编码维度，与输入的嵌入维度保持一致
+    def __init__(self, num_hiddens, dropout, max_len=1000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(dropout)
+        # 创建一个足够长的P
+        self.P = torch.zeros((1, max_len, num_hiddens))
+        X = torch.arange(max_len, dtype=torch.float32).reshape(
+            -1, 1) / torch.pow(10000, torch.arange(
+            0, num_hiddens, 2, dtype=torch.float32) / num_hiddens)
+        self.P[:, :, 0::2] = torch.sin(X)
+        self.P[:, :, 1::2] = torch.cos(X)
+
+    def forward(self, X):
+        # 第0维度batch_size直接广播，第一维度可以提供不超过max_len的值
+        X = X + self.P[:, :X.shape[1], :].to(X.device)
+        # 防止模型对P过于敏感，加dropout
+        return self.dropout(X)
+
+encoding_dim, num_steps = 32, 60
+pos_encoding = PositionalEncoding(encoding_dim, 0)
+pos_encoding.eval()
+X = pos_encoding(torch.zeros((1, num_steps, encoding_dim)))
+P = pos_encoding.P[:, :X.shape[1], :]
+d2l.plot(torch.arange(num_steps), P[0, :, 6:10].T, xlabel='Row (position)',
+         figsize=(6, 2.5), legend=["Col %d" % d for d in torch.arange(6, 10)])
+d2l.plt.show()
+
+for i in range(8):
+    print(f'{i}的二进制是：{i:>03b}')
+
+P = P[0, :, :].unsqueeze(0).unsqueeze(0)
+d2l.show_heatmaps(P, xlabel='Column (encoding dimension)',
+                  ylabel='Row (position)', figsize=(3.5, 4), cmap='Blues')
+d2l.plt.show()
+```
 
 ### Transformer
+**基础架构**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142217939.png)
+
+**多头注意力**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142224465.png)
+1. 对同一个 key 、value 、query 抽取不同的信息，例如短距离关系和长距离关系
+2. 多头注意力使用 h 个独立的注意力池化，合并各个头（head）输出得到最终输出，key 、value 、query 都是长为 1 的向量，通过全连接层映射到一个低一点的维度，然后进入到注意力模块中
+
+**多头注意力数学表达**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142227201.png)
+hi是每个头的输出(Rv, 1) h个头在特征维concat得到(Rv * h, 1) 再与FC层参数Wo(po, Rv * h)做矩阵乘法，得到最后输出
+
+**有掩码的多头注意力**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142252847.png)
+1. 解码器对序列中一个元素输出时，不应该考虑该元素之后的元素，注意力中是没有时间信息的，在输出中间第 i 个信息的时候，也能够看到后面的所有信息，这在编码的时候是可以的，但是在解码的时候是不行的，在解码的时候不应该考虑该元素本身或者该元素之后的元素
+2. 可以通过掩码来实现，也就是计算 xi 输出时，假设当前序列长度为 i，屏蔽后面所有信息，算softmax就不会算后面信息的权重
+
+**基于位置的前馈网络（Positionwise FFN）：**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142302583.png)
+- b：batchsize n：序列长度 d：dimension  
+- 通俗版本 b：有多少句子 n：句子有多少字 d：这个字有多少维
+- 在做卷积的时候一般是将 n 和 d 合成一维，变成 nd ；但是现在 n 是序列的长度，句子的长度会变化，要使模型能够处理任意的特征，所以不能将 n 作为一个特征，因此对每个序列中的每个元素作用一个全连接（将每个序列中的 xi 特征当作是一个样本）  
+- 其实就是全连接层，将输入形状由（b，n，d）变成（bn，d），然后作用两个全连接层，最后输出形状由（bn，d）变回（b，n，d），等价于两层核窗口为 1 的一维卷积层  
+
+**层归一化 Add&Norm**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142311347.png)
+- add就是residual残差连接 norm是层归一化
+- 不选择批量归一化的原因：
+  - 加入归一化能够更好地训练比较深的网络，但是这里不能使用批量归一化，批量归一化对每个特征/通道里元素进行归一化
+  - 这里的特征指的是每个序列中 D 中的一维，所以在做归一化的时候就是将其方差变 1 ，均值变 0
+  - 在做 NLP 的时候，如果选择将 d 作为特征的话，那么批量归一化的输入是 n*b ，b 是批量大小，n 是序列长度，序列的长度是会变的，所以每次做批量归一化的输入大小都不同，所以会导致不稳定，训练和预测的长度本来就不一样，预测的长度会慢慢变长，所以批量归一化不适合长度会变的 NLP 应用
+- 层归一化：
+  - b 代表 batchsize  d 代表特征维度  len 表示序列长度n
+  - 层归一化和批量归一化的目标相同，但是层归一化是基于特征维度进行归一化的
+  - 层归一化和批量归一化的区别在于：批量归一化在 d 的维度上找出一个矩阵，将其均值变成 0 ，方差变成 1，层归一化每次选的是一个元素，也就是每个 batch 里面的一个样本进行归一化
+  - 尽管批量归一化在计算机视觉中被广泛应用，但是在自然语言处理任务中，批量归一化通常不如层归一化的效果好，因为在自然语言处理任务中，输入序列的长度通常是变化的
+  - 虽然在做层归一化的时候，长度也是变化的，但是至少来说还是在一个单样本中，不管批量多少，都给定一个特征，这样对于变化的长度来讲，稍微稳定一点，不会因为长度变化，导致稳定性发生很大的变化
+```python
+
+```
 
 ## Chapter 10 : 优化算法
 ### 优化和深度学习
