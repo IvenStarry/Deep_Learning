@@ -3732,61 +3732,6 @@ class EncoderDecoder(nn.Module):
         return self.decoder(dec_X, dec_state)
 ```
 
-### 词嵌入(Word Embedding)
-词嵌入技术可以将单词转为方便神经网络处理的固定长度的向量
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142028893.png)
-区别与One-hot编码，词嵌入不仅可以缩小特征维数，还可以反映语义相近的词的联系
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142030535.png)
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033284.png)
-例如，词嵌入向量不仅可以反应 king & queen   and  man & woman之间的相似性，还可以反应king<-->man 与 queen <--> woman 之间的语义关联
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033081.png)
-通过不同的词嵌入算法，可以训练得到不同的嵌入矩阵
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142036729.png)
-例如，将 我喜欢学习数学 先切词，再用独热编码向量化成V
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142037938.png)
-将 矩阵V 和 特定的词嵌入算法训练的嵌入矩阵E 相乘，就可以得到句子的嵌入向量
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142041871.png)
-
-### word2vec算法
-word2vec算法是一种词嵌入算法，分为CBOW连续词袋模型和skip-gram跳字模型两种实现方式
-![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142108773.png)
-- CBOW模型根据上下文词汇，预测目标词汇
-  - 先设置好窗口长度
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142110523.png)
-  - 例如，窗口长度为2，模型需要通过窗口内词语，预测目标词
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142113571.png)
-  - 输入周围两个词语，预测目标词语
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142115459.png)
-  - 蓝框就是嵌入矩阵，N单词个数 V词向量的维度，通过嵌入矩阵将one-hot转为词向量，可以视作嵌入矩阵有一行是We
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142118381.png)
-  - embedding层的输出结果是上下文语义信息的平均
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142122213.png)
-  - 通过一个没有激活函数的线性层，转换词元总数的维度
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142124369.png)
-  - 再通过softmax，转化为每个词的概率值
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142127592.png)
-- skip-gram模型根据目标词汇，预测上下文
-  - 同理，先设置好窗口长度
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142131184.png)
-  - 例如，窗口长度为2，模型需要通过目标词，预测窗口内词语
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142132204.png)
-  - 原理，使语义相近的上下文词向量靠近，使语义较远的词向量远离，从而捕获语义关系
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142133154.png)
-  - 语义相近的数学表示：词向量点积尽可能大
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142135499.png)
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142136726.png)
-  - skip-gram模型
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142137716.png)
-  - in_embedding是skip模型的输出
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142138868.png)
-  - 数据集的设置
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142141318.png)
-  - 损失函数：最大化中心词和上下文词对的概率
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142151665.png)
-  - 负采样优化：避免softmax耗费资源，随机选择一些非上下文词作为负样本，目标最小化中心词和这些噪声词的相似度，这里的uv是词向量
-    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142154043.png)
-- 二者都最终目标都是为了迭代出词向量字典(嵌入矩阵E)
-
 ### 序列到序列学习(seq2seq)
 ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411121520546.png)
 Encoder可以用双向(提取特征)，但Decoder一般用单向(预测)
@@ -4616,12 +4561,363 @@ hi是每个头的输出(Rv, 1) h个头在特征维concat得到(Rv * h, 1) 再与
 
 **多头注意力**
 ```python
+import math
+import torch
+from torch import nn
+from d2l import torch as d2l
 
+# * 实现
+class MultiHeadAttention(nn.Module):
+    """多头注意力"""
+    def __init__(self, key_size, query_size, value_size, num_hiddens,
+                 num_heads, dropout, bias=False, **kwargs):
+        super(MultiHeadAttention, self).__init__(**kwargs)
+        self.num_heads = num_heads
+        self.attention = d2l.DotProductAttention(dropout)
+        self.W_q = nn.Linear(query_size, num_hiddens, bias=bias)
+        self.W_k = nn.Linear(key_size, num_hiddens, bias=bias)
+        self.W_v = nn.Linear(value_size, num_hiddens, bias=bias)
+        self.W_o = nn.Linear(num_hiddens, num_hiddens, bias=bias)
+
+    def forward(self, queries, keys, values, valid_lens):
+        # 输入进来 queries，keys，values的形状: (batch_size, 查询或者“键－值”对的个数, query_size)
+        # 经过qkv queries，keys，values的形状: (batch_size，查询或者“键－值”对的个数，num_hiddens)
+        # valid_lens　的形状: (batch_size，)或(batch_size，查询的个数)
+        
+        # 经过变换后，输出的queries，keys，values　的形状:
+        # (batch_size*num_heads，查询或者“键－值”对的个数，num_hiddens/num_heads)
+        queries = transpose_qkv(self.W_q(queries), self.num_heads)
+        keys = transpose_qkv(self.W_k(keys), self.num_heads)
+        values = transpose_qkv(self.W_v(values), self.num_heads)
+
+        if valid_lens is not None:
+            # 在轴0，将第一项（标量或者矢量）复制num_heads次，
+            # 然后如此复制第二项，然后诸如此类。
+            valid_lens = torch.repeat_interleave(valid_lens, repeats=self.num_heads, dim=0)
+
+        # output的形状:(batch_size*num_heads，查询的个数，num_hiddens/num_heads)
+        output = self.attention(queries, keys, values, valid_lens)
+
+        # output_concat的形状:(batch_size，查询的个数，num_hiddens)
+        output_concat = transpose_output(output, self.num_heads)
+        return self.W_o(output_concat)
+
+def transpose_qkv(X, num_heads):
+    """为了多注意力头的并行计算而变换形状"""
+    # 将wkv转换统一维度后，最后将每个头分开并放在第0维度方便并行计算，这里的num_hiddens包含了num_heads个头的hiddens
+    # 输入X的形状:(batch_size，查询或者“键－值”对的个数，num_hiddens)
+    # 输出X的形状:(batch_size，查询或者“键－值”对的个数，num_heads，num_hiddens/num_heads)
+    X = X.reshape(X.shape[0], X.shape[1], num_heads, -1)
+    # 输出X的形状:(batch_size，num_heads，查询或者“键－值”对的个数, num_hiddens/num_heads)
+    X = X.permute(0, 2, 1, 3)
+
+    # 最终输出的形状:(batch_size*num_heads, 查询或者“键－值”对的个数, num_hiddens/num_heads)
+    return X.reshape(-1, X.shape[2], X.shape[3])
+
+def transpose_output(X, num_heads):
+    """逆转transpose_qkv函数的操作"""
+    # 将头concat回去
+    X = X.reshape(-1, num_heads, X.shape[1], X.shape[2])
+    X = X.permute(0, 2, 1, 3)
+    # (batch_size，查询的个数，num_hiddens)
+    return X.reshape(X.shape[0], X.shape[1], -1)
+
+num_hiddens, num_heads = 100, 5
+attention = MultiHeadAttention(num_hiddens, num_hiddens, num_hiddens, num_hiddens, num_heads, 0.5)
+attention.eval()
+
+batch_size, num_queries = 2, 4
+num_kvpairs, valid_lens =  6, torch.tensor([3, 2])
+X = torch.ones((batch_size, num_queries, num_hiddens))
+Y = torch.ones((batch_size, num_kvpairs, num_hiddens))
+print(attention(X, Y, Y, valid_lens).shape)
 ```
 
 **Transformer**
 ```python
+import math
+import pandas as pd
+import torch
+from torch import nn
+from d2l import torch as d2l
 
+# * 基于位置的前馈网络
+class PositionWiseFFN(nn.Module):
+    """基于位置的前馈网络"""
+    # pytorch的默认实现是当输入不是二维，会把前面的维度都当作样本维，最后一个是特征维
+    def __init__(self, ffn_num_input, ffn_num_hiddens, ffn_num_outputs,
+                 **kwargs):
+        super(PositionWiseFFN, self).__init__(**kwargs)
+        self.dense1 = nn.Linear(ffn_num_input, ffn_num_hiddens)
+        self.relu = nn.ReLU()
+        self.dense2 = nn.Linear(ffn_num_hiddens, ffn_num_outputs)
+
+    def forward(self, X):
+        return self.dense2(self.relu(self.dense1(X)))
+
+ffn = PositionWiseFFN(4, 4, 8)
+ffn.eval()
+print(ffn(torch.ones((2, 3, 4)))[0])
+
+# * 残差连接和层规范化
+ln = nn.LayerNorm(2)
+bn = nn.BatchNorm1d(2)
+X = torch.tensor([[1, 2], [2, 3]], dtype=torch.float32)
+# 在训练模式下计算X的均值和方差
+print('layer norm:', ln(X), '\nbatch norm:', bn(X))
+
+class AddNorm(nn.Module):
+    """残差连接后进行层规范化"""
+    def __init__(self, normalized_shape, dropout, **kwargs):
+        super(AddNorm, self).__init__(**kwargs)
+        self.dropout = nn.Dropout(dropout)
+        self.ln = nn.LayerNorm(normalized_shape)
+
+    def forward(self, X, Y):
+        return self.ln(self.dropout(Y) + X)
+
+add_norm = AddNorm([3, 4], 0.5)
+add_norm.eval()
+print(add_norm(torch.ones((2, 3, 4)), torch.ones((2, 3, 4))).shape)
+
+# * 编码器
+class EncoderBlock(nn.Module):
+    """Transformer编码器块"""
+    def __init__(self, key_size, query_size, value_size, num_hiddens,
+                 norm_shape, ffn_num_input, ffn_num_hiddens, num_heads,
+                 dropout, use_bias=False, **kwargs):
+        super(EncoderBlock, self).__init__(**kwargs)
+        self.attention = d2l.MultiHeadAttention(
+            key_size, query_size, value_size, num_hiddens, num_heads, dropout,
+            use_bias)
+        self.addnorm1 = AddNorm(norm_shape, dropout)
+        self.ffn = PositionWiseFFN(
+            ffn_num_input, ffn_num_hiddens, num_hiddens)
+        self.addnorm2 = AddNorm(norm_shape, dropout)
+
+    def forward(self, X, valid_lens):
+        # 多头注意力后的输出和原本的X做残差连接并层归一化得到Y
+        Y = self.addnorm1(X, self.attention(X, X, X, valid_lens))
+        # 再将ffn的输出和Y做残差连接并归一化得到编码器输出
+        return self.addnorm2(Y, self.ffn(Y))
+
+X = torch.ones((2, 100, 24))
+valid_lens = torch.tensor([3, 2])
+encoder_blk = EncoderBlock(24, 24, 24, 24, [100, 24], 24, 48, 8, 0.5)
+encoder_blk.eval()
+print(encoder_blk(X, valid_lens).shape) # 输出形状不变
+
+class TransformerEncoder(d2l.Encoder):
+    """Transformer编码器"""
+    def __init__(self, vocab_size, key_size, query_size, value_size,
+                 num_hiddens, norm_shape, ffn_num_input, ffn_num_hiddens,
+                 num_heads, num_layers, dropout, use_bias=False, **kwargs):
+        super(TransformerEncoder, self).__init__(**kwargs)
+        self.num_hiddens = num_hiddens
+        self.embedding = nn.Embedding(vocab_size, num_hiddens)
+        # 自注意力没有位置信息，加入位置编码
+        self.pos_encoding = d2l.PositionalEncoding(num_hiddens, dropout)
+        self.blks = nn.Sequential()
+        # 把所有层都存起来
+        for i in range(num_layers):
+            self.blks.add_module("block"+str(i),
+                EncoderBlock(key_size, query_size, value_size, num_hiddens,
+                             norm_shape, ffn_num_input, ffn_num_hiddens,
+                             num_heads, dropout, use_bias))
+
+    def forward(self, X, valid_lens, *args):
+        # embedding函数默认使用均匀分布随机初始化 服从Wii~U(-sqrt(1/num_hiddens), sqrt(1/num_hiddens))
+        # 若嵌入向量的hiddens越大，嵌入向量值越小， 因为位置编码值严格控制在-1和1之间，为了限制在同一数量级
+        # 因此嵌入值乘以嵌入维度的平方根进行缩放，然后再与位置编码相加。
+        X = self.pos_encoding(self.embedding(X) * math.sqrt(self.num_hiddens))
+
+        # none是占位符，有数值传入进来，就会替换掉none
+        # 这里生成了一个长度为blk层数的元素初始化为None的列表
+        self.attention_weights = [None] * len(self.blks)
+        for i, blk in enumerate(self
+                                .blks):
+            X = blk(X, valid_lens)
+            # 得到每一层的注意力权重矩阵
+            self.attention_weights[
+                i] = blk.attention.attention.attention_weights
+        return X
+
+encoder = TransformerEncoder(
+    200, 24, 24, 24, 24, [100, 24], 24, 48, 8, 2, 0.5)
+encoder.eval()
+print(encoder(torch.ones((2, 100), dtype=torch.long), valid_lens).shape)
+
+# * 解码器
+class DecoderBlock(nn.Module):
+    """解码器中第i个块"""
+    def __init__(self, key_size, query_size, value_size, num_hiddens,
+                 norm_shape, ffn_num_input, ffn_num_hiddens, num_heads,
+                 dropout, i, **kwargs):
+        super(DecoderBlock, self).__init__(**kwargs)
+        self.i = i
+        self.attention1 = d2l.MultiHeadAttention(
+            key_size, query_size, value_size, num_hiddens, num_heads, dropout)
+        self.addnorm1 = AddNorm(norm_shape, dropout)
+        self.attention2 = d2l.MultiHeadAttention(
+            key_size, query_size, value_size, num_hiddens, num_heads, dropout)
+        self.addnorm2 = AddNorm(norm_shape, dropout)
+        self.ffn = PositionWiseFFN(ffn_num_input, ffn_num_hiddens,
+                                   num_hiddens)
+        self.addnorm3 = AddNorm(norm_shape, dropout)
+
+    def forward(self, X, state):
+        enc_outputs, enc_valid_lens = state[0], state[1]
+
+        # 训练阶段，整个目标序列已知，解码器输入就是完整的目标序列，没有逐步生成词元的需求，所有时间步一起处理
+        # 因此state[2][self.i]初始化为None， 不需要上下文。
+
+        # 预测阶段，词元一个接着一个解码，每次解码时，只能看到当前输入的词元(上一时间步的输出)和之前生成的历史词元，
+        # 因此state[2][self.i]包含着直到当前时间步第i个块解码的输出表示
+
+        if state[2][self.i] is None: # 训练阶段不需要预测的输出
+            key_values = X
+        else: # 预测阶段需要把之前的输出X记录下来
+            key_values = torch.cat((state[2][self.i], X), axis=1)
+        
+        # 更新历史状态(输出了哪些单词)
+        state[2][self.i] = key_values
+
+        # 对于解码器输入刚进来，在训练阶段，计算第i个输出要把后面的输出遮掉
+        # e.g. 目标序列i love you  输入序列 bos i love  dec_valid_lens[1, 2, 3]
+        # 第一个时间步 看到bos
+        # 第二个时间步 看到bos i 
+        # 第三个时间步 看到bos i love
+
+        if self.training: 
+            batch_size, num_steps, _ = X.shape
+            # dec_valid_lens的开头:(batch_size,num_steps),
+            # 其中每一行是[1,2,...,num_steps]
+            dec_valid_lens = torch.arange(
+                1, num_steps + 1, device=X.device).repeat(batch_size, 1)
+        else: # 预测阶段，看不到后面的输出，因此也不需要遮
+            dec_valid_lens = None
+
+        # 自注意力(掩蔽多头注意力)
+        # 训练阶段，模型可以看到整个目标序列，keyvalue就是目标序列自己本身
+        # 预测阶段，模型要逐步生成，key和value要包含历史状态
+        # dec_valid_lens 限制训练时解码器能看到的序列输出
+        X2 = self.attention1(X, key_values, key_values, dec_valid_lens)
+        Y = self.addnorm1(X, X2)
+
+        # 编码器－解码器注意力
+        # 由信息传递，这里keyvalue时编码器的输出
+        # enc_outputs的开头:(batch_size,num_steps,num_hiddens)
+        # enc_valid_lens 序列长度不一致，会用pad填充，表示编码器有效的长度
+        Y2 = self.attention2(Y, enc_outputs, enc_outputs, enc_valid_lens)
+        Z = self.addnorm2(Y, Y2)
+        return self.addnorm3(Z, self.ffn(Z)), state
+
+decoder_blk = DecoderBlock(24, 24, 24, 24, [100, 24], 24, 48, 8, 0.5, 0)
+decoder_blk.eval()
+X = torch.ones((2, 100, 24))
+state = [encoder_blk(X, valid_lens), valid_lens, [None]]
+print(decoder_blk(X, state)[0].shape)
+
+class TransformerDecoder(d2l.AttentionDecoder):
+    def __init__(self, vocab_size, key_size, query_size, value_size,
+                 num_hiddens, norm_shape, ffn_num_input, ffn_num_hiddens,
+                 num_heads, num_layers, dropout, **kwargs):
+        super(TransformerDecoder, self).__init__(**kwargs)
+        self.num_hiddens = num_hiddens
+        self.num_layers = num_layers
+        self.embedding = nn.Embedding(vocab_size, num_hiddens)
+        self.pos_encoding = d2l.PositionalEncoding(num_hiddens, dropout)
+        self.blks = nn.Sequential()
+        # num_layers个这样的block块
+        for i in range(num_layers):
+            self.blks.add_module("block"+str(i),
+                DecoderBlock(key_size, query_size, value_size, num_hiddens,
+                             norm_shape, ffn_num_input, ffn_num_hiddens,
+                             num_heads, dropout, i))
+        # 最后一层输出预测结果
+        self.dense = nn.Linear(num_hiddens, vocab_size)
+
+    # 初始状态
+    def init_state(self, enc_outputs, enc_valid_lens, *args):
+        return [enc_outputs, enc_valid_lens, [None] * self.num_layers]
+
+    def forward(self, X, state):
+        X = self.pos_encoding(self.embedding(X) * math.sqrt(self.num_hiddens))
+        self._attention_weights = [[None] * len(self.blks) for _ in range (2)]
+        for i, blk in enumerate(self.blks):
+            X, state = blk(X, state)
+            # 解码器自注意力权重
+            self._attention_weights[0][
+                i] = blk.attention1.attention.attention_weights
+            # “编码器－解码器”自注意力权重
+            self._attention_weights[1][
+                i] = blk.attention2.attention.attention_weights
+        return self.dense(X), state
+
+    @property
+    def attention_weights(self):
+        return self._attention_weights
+
+# * 训练
+num_hiddens, num_layers, dropout, batch_size, num_steps = 32, 2, 0.1, 64, 10
+lr, num_epochs, device = 0.005, 200, d2l.try_gpu()
+ffn_num_input, ffn_num_hiddens, num_heads = 32, 64, 4
+key_size, query_size, value_size = 32, 32, 32
+norm_shape = [32]
+
+train_iter, src_vocab, tgt_vocab = d2l.load_data_nmt(batch_size, num_steps)
+
+encoder = TransformerEncoder(
+    len(src_vocab), key_size, query_size, value_size, num_hiddens,
+    norm_shape, ffn_num_input, ffn_num_hiddens, num_heads,
+    num_layers, dropout)
+decoder = TransformerDecoder(
+    len(tgt_vocab), key_size, query_size, value_size, num_hiddens,
+    norm_shape, ffn_num_input, ffn_num_hiddens, num_heads,
+    num_layers, dropout)
+net = d2l.EncoderDecoder(encoder, decoder)
+d2l.train_seq2seq(net, train_iter, lr, num_epochs, tgt_vocab, device)
+
+engs = ['go .', "i lost .", 'he\'s calm .', 'i\'m home .']
+fras = ['va !', 'j\'ai perdu .', 'il est calme .', 'je suis chez moi .']
+for eng, fra in zip(engs, fras):
+    translation, dec_attention_weight_seq = d2l.predict_seq2seq(
+        net, eng, src_vocab, tgt_vocab, num_steps, device, True)
+    print(f'{eng} => {translation}, ',
+          f'bleu {d2l.bleu(translation, fra, k=2):.3f}')
+
+enc_attention_weights = torch.cat(net.encoder.attention_weights, 0).reshape((num_layers, num_heads,
+    -1, num_steps))
+print(enc_attention_weights.shape)
+
+# 每个head的query看的key-value对不一样
+d2l.show_heatmaps(
+    enc_attention_weights.cpu(), xlabel='Key positions',
+    ylabel='Query positions', titles=['Head %d' % i for i in range(1, 5)],
+    figsize=(7, 3.5))
+d2l.plt.show()
+
+dec_attention_weights_2d = [head[0].tolist()
+                            for step in dec_attention_weight_seq
+                            for attn in step for blk in attn for head in blk]
+dec_attention_weights_filled = torch.tensor(
+    pd.DataFrame(dec_attention_weights_2d).fillna(0.0).values)
+dec_attention_weights = dec_attention_weights_filled.reshape((-1, 2, num_layers, num_heads, num_steps))
+dec_self_attention_weights, dec_inter_attention_weights = \
+    dec_attention_weights.permute(1, 2, 3, 0, 4)
+print(dec_self_attention_weights.shape, dec_inter_attention_weights.shape)
+
+d2l.show_heatmaps(
+    dec_self_attention_weights[:, :, :, :len(translation.split()) + 1],
+    xlabel='Key positions', ylabel='Query positions',
+    titles=['Head %d' % i for i in range(1, 5)], figsize=(7, 3.5))
+d2l.plt.show()
+
+d2l.show_heatmaps(
+    dec_inter_attention_weights, xlabel='Key positions',
+    ylabel='Query positions', titles=['Head %d' % i for i in range(1, 5)],
+    figsize=(7, 3.5))
+d2l.plt.show()
 ```
 
 ## Chapter 10 : 优化算法
@@ -6785,38 +7081,783 @@ with open('submission.csv', 'w') as f:
 ```
 
 ## Chapter 13 : 自然语言处理: 预训练
-### 词嵌入(word2vec)
-
-### 近似训练
-
-### 用于与训练词嵌入的数据集
+### 词嵌入(Word Embedding)
+词嵌入技术可以将单词转为方便神经网络处理的固定长度的向量
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142028893.png)
+区别与One-hot编码，词嵌入不仅可以缩小特征维数，还可以反映语义相近的词的联系
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142030535.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033284.png)
+例如，词嵌入向量不仅可以反应 king & queen   and  man & woman之间的相似性，还可以反应king<-->man 与 queen <--> woman 之间的语义关联
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142033081.png)
+通过不同的词嵌入算法，可以训练得到不同的嵌入矩阵
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142036729.png)
+例如，将 我喜欢学习数学 先切词，再用独热编码向量化成V
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142037938.png)
+将 矩阵V 和 特定的词嵌入算法训练的嵌入矩阵E 相乘，就可以得到句子的嵌入向量
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142041871.png)
 
 ### 预训练word2vec
-
-### 全局向量的词嵌入(GloVe)
-
-### 子词嵌入
-
-### 词的相似性和类比任务
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191556429.png)
+word2vec算法是一种词嵌入算法，分为CBOW连续词袋模型和skip-gram跳字模型两种实现方式
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142108773.png)
+- CBOW模型根据上下文词汇，预测目标词汇
+  - 先设置好窗口长度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142110523.png)
+  - 例如，窗口长度为2，模型需要通过窗口内词语，预测目标词
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142113571.png)
+  - 输入周围两个词语，预测目标词语
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142115459.png)
+  - 蓝框就是嵌入矩阵，N单词个数 V词向量的维度，通过嵌入矩阵将one-hot转为词向量，可以视作嵌入矩阵有一行是We
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142118381.png)
+  - embedding层的输出结果是上下文语义信息的平均
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142122213.png)
+  - 通过一个没有激活函数的线性层，转换词元总数的维度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142124369.png)
+  - 再通过softmax，转化为每个词的概率值
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142127592.png)
+- skip-gram模型根据目标词汇，预测上下文
+  - 同理，先设置好窗口长度
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142131184.png)
+  - 例如，窗口长度为2，模型需要通过目标词，预测窗口内词语
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142132204.png)
+  - 原理，使语义相近的上下文词向量靠近，使语义较远的词向量远离，从而捕获语义关系
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142133154.png)
+  - 语义相近的数学表示：词向量点积尽可能大
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142135499.png)
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142136726.png)
+  - skip-gram模型
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142137716.png)
+  - in_embedding是skip模型的输出
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142138868.png)
+  - 数据集的设置
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142141318.png)
+  - 损失函数：最大化中心词和上下文词对的概率
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142151665.png)
+  - 负采样优化：避免softmax耗费资源，随机选择一些非上下文词作为负样本，目标最小化中心词和这些噪声词的相似度，这里的uv是词向量
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411142154043.png)
+- 二者都最终目标都是为了迭代出词向量字典(嵌入矩阵E)
 
 ### 来自Transformers的双向编码器表示(BERT)
+**BERT的动机**：类似计算机视觉的迁移学习一样，底层抽取特征，只需要改变输出层的类别数就可以适应不同的任务。
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191558478.png)
+
+**BERT架构**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191607360.png)
+
+**对输入的修改**：
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191610378.png)
+- 一般情况下，原句子进入编码器，目标句子进入解码器
+- BERT只有编码器，所以BERT将两个句子放在一起成为句子对，用cls作为句子对开头，sep作为句子的分割符
+- 对于transformer仅仅使用分隔符标签，不好区分句子的先后顺序，因此还添加了不同句子的分隔embedding
+  - 第一个句子添加embedding0(包括句首分类标签cls 和 句尾分割标签sep)
+  - 第二个句子添加embedding1(包括句尾分割标签sep)
+- 还有每个token的可学习的位置编码
+
+**预训练任务1：带掩码的语言模型**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191627217.png)
+- transformer的编码器是双向的，又看前面又看后面，解码器是单向的，只看前面的信息
+- BERT不能这么做，因为他的编码器就是transformer的编码器，也是双向的，不能完成逐词的预测任务
+- 因此，加入随机的掩码，随机的将一些词遮起来，预测这些遮起来的词，类似完形填空
+- 现在BERT做的任务就是完形填空，而不是预测未来，这样就可以正常的看双向信息
+- 出现问题：虽然 BERT 在训练的时候加了很多的 <mask> ，但是在微调任务中不能出现 <mask> 这种人造特殊词元，为了避免预训练和微调之间的这种不匹配，解决的办法是模型不要总是对 <mask> 遮掉的部分进行预测输出，类似于一种正则化方法
+  - 在选中的15%的词元中，
+  - 80% 概率下，将选中的词元变成 <mask>
+  - 10% 概率下换成一个随机词元（这种偶然的噪声鼓励 BERT 在其双向上下文编码中不那么偏向于掩蔽词元，尤其是当标签词元保持不变时）
+  - 10% 概率下保持原有的词元
+
+**预训练任务2：下一句子预测**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191638347.png)
+- 预测两个句子是不是相邻的，可以帮助理解两个句子的序列关系
+
+**总结**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411191640260.png)
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 输入表示
+def get_tokens_and_segments(tokens_a, tokens_b=None):
+    """获取输入序列的词元及其片段索引"""
+    tokens = ['<cls>'] + tokens_a + ['<sep>']
+    # 0和1分别标记片段A和B
+    segments = [0] * (len(tokens_a) + 2)
+    if tokens_b is not None:
+        tokens += tokens_b + ['<sep>']
+        segments += [1] * (len(tokens_b) + 1)
+    return tokens, segments
+
+class BERTEncoder(nn.Module):
+    """BERT编码器"""
+    def __init__(self, vocab_size, num_hiddens, norm_shape, ffn_num_input,
+                 ffn_num_hiddens, num_heads, num_layers, dropout,
+                 max_len=1000, key_size=768, query_size=768, value_size=768,
+                 **kwargs):
+        super(BERTEncoder, self).__init__(**kwargs)
+        self.token_embedding = nn.Embedding(vocab_size, num_hiddens)
+        ''' 输入要么是0要么是1 
+        假设num_hiddens是4 ，segement是[0, 0, 1]
+        0 的独热编码是[1 0]  1 的独热编码是[0 1] 
+        因此segement的独热编码矩阵为[[1,0],[1,0][0,1]]  shape(3, 2)
+        嵌入矩阵随机初始化为[[ 0.05,  0.05,  0.05,  0.05],[ 0.10,  0.10,  0.10,  0.10]] shape(2, 4)
+        则嵌入向量就是[ 0.05,  0.05,  0.05,  0.05],
+        [ 0.05,  0.05,  0.05,  0.05],
+        [ 0.10,  0.10,  0.10,  0.10]'''
+        self.segment_embedding = nn.Embedding(2, num_hiddens)
+        self.blks = nn.Sequential()
+        for i in range(num_layers):
+            self.blks.add_module(f"{i}", d2l.EncoderBlock(
+                key_size, query_size, value_size, num_hiddens, norm_shape,
+                ffn_num_input, ffn_num_hiddens, num_heads, dropout, True))
+        # 在BERT中，位置嵌入是可学习的，因此我们创建一个足够长的位置嵌入参数
+        # 最简单的就是，随机初始化，每个位置对应加入以num_hiddens为步长，从1到max为区域的值
+        self.pos_embedding = nn.Parameter(torch.randn(1, max_len, num_hiddens))
+
+    def forward(self, tokens, segments, valid_lens):
+        # 在以下代码段中，X的形状保持不变：（批量大小，最大序列长度，num_hiddens）
+        X = self.token_embedding(tokens) + self.segment_embedding(segments)
+        X = X + self.pos_embedding.data[:, :X.shape[1], :]
+        for blk in self.blks:
+            X = blk(X, valid_lens)
+        return X
+
+vocab_size, num_hiddens, ffn_num_hiddens, num_heads = 10000, 768, 1024, 4
+norm_shape, ffn_num_input, num_layers, dropout = [768], 768, 2, 0.2
+encoder = BERTEncoder(vocab_size, num_hiddens, norm_shape, ffn_num_input,
+                      ffn_num_hiddens, num_heads, num_layers, dropout)
+
+tokens = torch.randint(0, vocab_size, (2, 8))
+print(tokens)
+segments = torch.tensor([[0, 0, 0, 0, 1, 1, 1, 1], [0, 0, 0, 1, 1, 1, 1, 1]])
+encoded_X = encoder(tokens, segments, None)
+print(encoded_X.shape)
+
+# * 预训练任务
+# ? 掩蔽语言模型
+class MaskLM(nn.Module):
+    """BERT的掩蔽语言模型任务"""
+    def __init__(self, vocab_size, num_hiddens, num_inputs=768, **kwargs):
+        super(MaskLM, self).__init__(**kwargs)
+        # 在BERT上接一个单隐藏层的MLP来预测
+        self.mlp = nn.Sequential(nn.Linear(num_inputs, num_hiddens),
+                                 nn.ReLU(),
+                                 nn.LayerNorm(num_hiddens),
+                                 nn.Linear(num_hiddens, vocab_size))
+
+    # pred_positions告诉模型哪些地方需要预测
+    def forward(self, X, pred_positions):
+        num_pred_positions = pred_positions.shape[1]
+        pred_positions = pred_positions.reshape(-1)
+        batch_size = X.shape[0]
+        batch_idx = torch.arange(0, batch_size)
+        # 假设batch_size=2，num_pred_positions=3
+        # 那么batch_idx是np.array（[0,0,0,1,1,1]）
+        batch_idx = torch.repeat_interleave(batch_idx, num_pred_positions)
+        # 拿出要预测的地方相对应的输入向量
+        masked_X = X[batch_idx, pred_positions]
+        masked_X = masked_X.reshape((batch_size, num_pred_positions, -1))
+        mlm_Y_hat = self.mlp(masked_X)
+        return mlm_Y_hat
+
+mlm = MaskLM(vocab_size, num_hiddens)
+# 预测位置
+mlm_positions = torch.tensor([[1, 5, 2], [6, 1, 5]]) # 第一句话想要预测第1 5 2个token 
+mlm_Y_hat = mlm(encoded_X, mlm_positions)
+print(mlm_Y_hat.shape) # (2, 3, 10000) batch_size:2  预测字数:3  预测分类:10000
+
+# 相对应的实际输出
+mlm_Y = torch.tensor([[7, 8, 9], [10, 20, 30]])
+loss = nn.CrossEntropyLoss(reduction='none')
+mlm_l = loss(mlm_Y_hat.reshape((-1, vocab_size)), mlm_Y.reshape(-1))
+print(mlm_l.shape)
+
+
+# ? 下一句预测
+class NextSentencePred(nn.Module):
+    """BERT的下一句预测任务"""
+    def __init__(self, num_inputs, **kwargs):
+        super(NextSentencePred, self).__init__(**kwargs)
+        # 输出 是相邻 还是不相邻
+        self.output = nn.Linear(num_inputs, 2)
+
+    def forward(self, X):
+        # X的形状：(batchsize,num_hiddens)
+        return self.output(X)
+
+encoded_X = torch.flatten(encoded_X, start_dim=1)
+# NSP的输入形状:(batchsize，num_hiddens)
+nsp = NextSentencePred(encoded_X.shape[-1])
+nsp_Y_hat = nsp(encoded_X)
+print(nsp_Y_hat.shape)
+
+nsp_y = torch.tensor([0, 1])
+nsp_l = loss(nsp_Y_hat, nsp_y)
+print(nsp_l.shape)
+
+# * 整合代码
+class BERTModel(nn.Module):
+    """BERT模型"""
+    def __init__(self, vocab_size, num_hiddens, norm_shape, ffn_num_input,
+                 ffn_num_hiddens, num_heads, num_layers, dropout,
+                 max_len=1000, key_size=768, query_size=768, value_size=768,
+                 hid_in_features=768, mlm_in_features=768,
+                 nsp_in_features=768):
+        super(BERTModel, self).__init__()
+        self.encoder = BERTEncoder(vocab_size, num_hiddens, norm_shape,
+                    ffn_num_input, ffn_num_hiddens, num_heads, num_layers,
+                    dropout, max_len=max_len, key_size=key_size,
+                    query_size=query_size, value_size=value_size)
+        self.hidden = nn.Sequential(nn.Linear(hid_in_features, num_hiddens),
+                                    nn.Tanh())
+        self.mlm = MaskLM(vocab_size, num_hiddens, mlm_in_features)
+        self.nsp = NextSentencePred(nsp_in_features)
+
+    def forward(self, tokens, segments, valid_lens=None,
+                pred_positions=None):
+        encoded_X = self.encoder(tokens, segments, valid_lens)
+        if pred_positions is not None:
+            mlm_Y_hat = self.mlm(encoded_X, pred_positions)
+        else:
+            mlm_Y_hat = None
+        # 用于下一句预测的多层感知机分类器的隐藏层，0是“<cls>”标记的索引
+        nsp_Y_hat = self.nsp(self.hidden(encoded_X[:, 0, :]))
+        return encoded_X, mlm_Y_hat, nsp_Y_hat
+```
 
 ### 用于预训练BERT的数据集
+```python
+import os
+import random
+import torch
+from d2l import torch as d2l
+
+d2l.DATA_HUB['wikitext-2'] = (
+    'https://s3.amazonaws.com/research.metamind.io/wikitext/'
+    'wikitext-2-v1.zip', '3c914d17d80b1459be871a5039ac23e752a53cbe')
+
+def _read_wiki(data_dir):
+    file_name = os.path.join(data_dir, 'wiki.train.tokens')
+    with open(file_name, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    # 大写字母转换为小写字母
+    paragraphs = [line.strip().lower().split(' . ')
+                  for line in lines if len(line.split(' . ')) >= 2]
+    random.shuffle(paragraphs)
+    return paragraphs
+
+# * 为预训练任务定义辅助函数
+# 生成下一句预测人物的数据
+# 给一个句子和相邻的下一个句子，paragraphs是全部句子的集合，返回概率为0.5的句子对
+def _get_next_sentence(sentence, next_sentence, paragraphs):
+    if random.random() < 0.5:
+        is_next = True
+    else:
+        # paragraphs是三重列表的嵌套
+        next_sentence = random.choice(random.choice(paragraphs))
+        is_next = False
+    return sentence, next_sentence, is_next
+
+def _get_nsp_data_from_paragraph(paragraph, paragraphs, vocab, max_len):
+    nsp_data_from_paragraph = []
+    for i in range(len(paragraph) - 1):
+        # 给出句子对，是否相邻
+        tokens_a, tokens_b, is_next = _get_next_sentence(
+            paragraph[i], paragraph[i + 1], paragraphs)
+        # 考虑1个'<cls>'词元和2个'<sep>'词元
+        if len(tokens_a) + len(tokens_b) + 3 > max_len:
+            continue
+        # 拼接句子对
+        tokens, segments = d2l.get_tokens_and_segments(tokens_a, tokens_b)
+        nsp_data_from_paragraph.append((tokens, segments, is_next))
+    return nsp_data_from_paragraph
+
+# 生成遮蔽语言模型任务的数据
+def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
+                        vocab):
+    # 为遮蔽语言模型的输入创建新的词元副本，其中输入可能包含替换的“<mask>”或随机词元
+    mlm_input_tokens = [token for token in tokens]
+    pred_positions_and_labels = []
+    # 打乱后用于在遮蔽语言模型任务中获取15%的随机词元进行预测
+    random.shuffle(candidate_pred_positions)
+    for mlm_pred_position in candidate_pred_positions:
+        if len(pred_positions_and_labels) >= num_mlm_preds:
+            break
+        masked_token = None
+        # 80%的时间：将词替换为“<mask>”词元
+        if random.random() < 0.8:
+            masked_token = '<mask>'
+        else:
+            # 10%的时间：保持词不变
+            if random.random() < 0.5:
+                masked_token = tokens[mlm_pred_position]
+            # 10%的时间：用随机词替换该词
+            else:
+                masked_token = random.choice(vocab.idx_to_token)
+        
+        # 覆盖后的tokens
+        mlm_input_tokens[mlm_pred_position] = masked_token
+        pred_positions_and_labels.append(
+            (mlm_pred_position, tokens[mlm_pred_position]))
+    
+    # 返回替换后的tokens 还有 被替换的位置和token
+    return mlm_input_tokens, pred_positions_and_labels
+
+def _get_mlm_data_from_tokens(tokens, vocab):
+    candidate_pred_positions = []
+    # tokens是一个字符串列表
+    for i, token in enumerate(tokens):
+        # 在遮蔽语言模型任务中不会预测特殊词元
+        if token in ['<cls>', '<sep>']:
+            continue
+        candidate_pred_positions.append(i)
+    # 遮蔽语言模型任务中预测15%的随机词元
+    num_mlm_preds = max(1, round(len(tokens) * 0.15))
+    mlm_input_tokens, pred_positions_and_labels = _replace_mlm_tokens(
+        tokens, candidate_pred_positions, num_mlm_preds, vocab)
+    pred_positions_and_labels = sorted(pred_positions_and_labels,
+                                       key=lambda x: x[0])
+    pred_positions = [v[0] for v in pred_positions_and_labels]
+    mlm_pred_labels = [v[1] for v in pred_positions_and_labels]
+    return vocab[mlm_input_tokens], pred_positions, vocab[mlm_pred_labels]
+
+# * 将文本转换为预训练数据集
+# 如果句子对长度不够，要加入pad
+def _pad_bert_inputs(examples, max_len, vocab):
+    max_num_mlm_preds = round(max_len * 0.15)
+    all_token_ids, all_segments, valid_lens,  = [], [], []
+    all_pred_positions, all_mlm_weights, all_mlm_labels = [], [], []
+    nsp_labels = []
+    for (token_ids, pred_positions, mlm_pred_label_ids, segments,
+         is_next) in examples:
+        all_token_ids.append(torch.tensor(token_ids + [vocab['<pad>']] * (
+            max_len - len(token_ids)), dtype=torch.long))
+        all_segments.append(torch.tensor(segments + [0] * (
+            max_len - len(segments)), dtype=torch.long))
+        # valid_lens不包括'<pad>'的计数
+        valid_lens.append(torch.tensor(len(token_ids), dtype=torch.float32))
+        all_pred_positions.append(torch.tensor(pred_positions + [0] * (
+            max_num_mlm_preds - len(pred_positions)), dtype=torch.long))
+        # 填充词元的预测将通过乘以0权重在损失中过滤掉
+        all_mlm_weights.append(
+            torch.tensor([1.0] * len(mlm_pred_label_ids) + [0.0] * (
+                max_num_mlm_preds - len(pred_positions)),
+                dtype=torch.float32))
+        all_mlm_labels.append(torch.tensor(mlm_pred_label_ids + [0] * (
+            max_num_mlm_preds - len(mlm_pred_label_ids)), dtype=torch.long))
+        nsp_labels.append(torch.tensor(is_next, dtype=torch.long))
+    return (all_token_ids, all_segments, valid_lens, all_pred_positions,
+            all_mlm_weights, all_mlm_labels, nsp_labels)
+
+class _WikiTextDataset(torch.utils.data.Dataset):
+    def __init__(self, paragraphs, max_len):
+        # 输入paragraphs[i]是代表段落的句子字符串列表；
+        # 而输出paragraphs[i]是代表段落的句子列表，其中每个句子都是词元列表
+        paragraphs = [d2l.tokenize(
+            paragraph, token='word') for paragraph in paragraphs]
+        sentences = [sentence for paragraph in paragraphs
+                     for sentence in paragraph]
+        self.vocab = d2l.Vocab(sentences, min_freq=5, reserved_tokens=[
+            '<pad>', '<mask>', '<cls>', '<sep>'])
+        # 获取下一句子预测任务的数据
+        examples = []
+        for paragraph in paragraphs:
+            examples.extend(_get_nsp_data_from_paragraph(
+                paragraph, paragraphs, self.vocab, max_len))
+        # 获取遮蔽语言模型任务的数据
+        examples = [(_get_mlm_data_from_tokens(tokens, self.vocab)
+                      + (segments, is_next))
+                     for tokens, segments, is_next in examples]
+        # 填充输入
+        (self.all_token_ids, self.all_segments, self.valid_lens,
+         self.all_pred_positions, self.all_mlm_weights,
+         self.all_mlm_labels, self.nsp_labels) = _pad_bert_inputs(
+            examples, max_len, self.vocab)
+
+    def __getitem__(self, idx):
+        return (self.all_token_ids[idx], self.all_segments[idx],
+                self.valid_lens[idx], self.all_pred_positions[idx],
+                self.all_mlm_weights[idx], self.all_mlm_labels[idx],
+                self.nsp_labels[idx])
+
+    def __len__(self):
+        return len(self.all_token_ids)
+
+def load_data_wiki(batch_size, max_len):
+    """加载WikiText-2数据集"""
+    num_workers = d2l.get_dataloader_workers()
+    data_dir = d2l.download_extract('wikitext-2', 'wikitext-2')
+    paragraphs = _read_wiki(data_dir)
+    train_set = _WikiTextDataset(paragraphs, max_len)
+    train_iter = torch.utils.data.DataLoader(train_set, batch_size,
+                                        shuffle=True, num_workers=num_workers)
+    return train_iter, train_set.vocab
+
+batch_size, max_len = 512, 64
+train_iter, vocab = load_data_wiki(batch_size, max_len)
+
+for (tokens_X, segments_X, valid_lens_x, pred_positions_X, mlm_weights_X,
+     mlm_Y, nsp_y) in train_iter:
+    print(tokens_X.shape, segments_X.shape, valid_lens_x.shape,
+          pred_positions_X.shape, mlm_weights_X.shape, mlm_Y.shape,
+          nsp_y.shape)
+    break
+
+print(len(vocab))
+```
 
 ### 预训练BERT
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+# * 预训练BERT
+batch_size, max_len = 512, 64
+train_iter, vocab = d2l.load_data_wiki(batch_size, max_len)
+
+net = d2l.BERTModel(len(vocab), num_hiddens=128, norm_shape=[128],
+                    ffn_num_input=128, ffn_num_hiddens=256, num_heads=2,
+                    num_layers=2, dropout=0.2, key_size=128, query_size=128,
+                    value_size=128, hid_in_features=128, mlm_in_features=128,
+                    nsp_in_features=128)
+devices = d2l.try_all_gpus()
+loss = nn.CrossEntropyLoss()
+
+def _get_batch_loss_bert(net, loss, vocab_size, tokens_X,
+                         segments_X, valid_lens_x,
+                         pred_positions_X, mlm_weights_X,
+                         mlm_Y, nsp_y):
+    # 前向传播
+    _, mlm_Y_hat, nsp_Y_hat = net(tokens_X, segments_X,
+                                  valid_lens_x.reshape(-1),
+                                  pred_positions_X)
+    # 计算遮蔽语言模型损失  被pad掉的部分不算loss
+    mlm_l = loss(mlm_Y_hat.reshape(-1, vocab_size), mlm_Y.reshape(-1)) * mlm_weights_X.reshape(-1, 1)
+    mlm_l = mlm_l.sum() / (mlm_weights_X.sum() + 1e-8)
+    # 计算下一句子预测任务的损失
+    nsp_l = loss(nsp_Y_hat, nsp_y)
+    l = mlm_l + nsp_l
+    return mlm_l, nsp_l, l
+
+def train_bert(train_iter, net, loss, vocab_size, devices, num_steps):
+    net = nn.DataParallel(net, device_ids=devices).to(devices[0])
+    trainer = torch.optim.Adam(net.parameters(), lr=0.01)
+    step, timer = 0, d2l.Timer()
+    animator = d2l.Animator(xlabel='step', ylabel='loss',
+                            xlim=[1, num_steps], legend=['mlm', 'nsp'])
+    # 遮蔽语言模型损失的和，下一句预测任务损失的和，句子对的数量，计数
+    metric = d2l.Accumulator(4)
+    num_steps_reached = False
+
+    # 不用epoch，算的是num_step序列最大长度
+    while step < num_steps and not num_steps_reached:
+        for tokens_X, segments_X, valid_lens_x, pred_positions_X,\
+            mlm_weights_X, mlm_Y, nsp_y in train_iter:
+            tokens_X = tokens_X.to(devices[0])
+            segments_X = segments_X.to(devices[0])
+            valid_lens_x = valid_lens_x.to(devices[0])
+            pred_positions_X = pred_positions_X.to(devices[0])
+            mlm_weights_X = mlm_weights_X.to(devices[0])
+            mlm_Y, nsp_y = mlm_Y.to(devices[0]), nsp_y.to(devices[0])
+            trainer.zero_grad()
+            timer.start()
+            mlm_l, nsp_l, l = _get_batch_loss_bert(
+                net, loss, vocab_size, tokens_X, segments_X, valid_lens_x,
+                pred_positions_X, mlm_weights_X, mlm_Y, nsp_y)
+            l.backward()
+            trainer.step()
+            metric.add(mlm_l, nsp_l, tokens_X.shape[0], 1)
+            timer.stop()
+            animator.add(step + 1,
+                         (metric[0] / metric[3], metric[1] / metric[3]))
+            step += 1
+            if step == num_steps:
+                num_steps_reached = True
+                break
+
+    print(f'MLM loss {metric[0] / metric[3]:.3f}, '
+          f'NSP loss {metric[1] / metric[3]:.3f}')
+    print(f'{metric[2] / timer.sum():.1f} sentence pairs/sec on '
+          f'{str(devices)}')
+
+train_bert(train_iter, net, loss, len(vocab), devices, 50)
+
+# * 用BERT表示文本
+def get_bert_encoding(net, tokens_a, tokens_b=None):
+    tokens, segments = d2l.get_tokens_and_segments(tokens_a, tokens_b)
+    token_ids = torch.tensor(vocab[tokens], device=devices[0]).unsqueeze(0)
+    segments = torch.tensor(segments, device=devices[0]).unsqueeze(0)
+    valid_len = torch.tensor(len(tokens), device=devices[0]).unsqueeze(0)
+    encoded_X, _, _ = net(token_ids, segments, valid_len)
+    # 返回的是一个从原数据学习到的num_hiddens维的特征，还没有分配到具体的任务
+    return encoded_X
+
+tokens_a = ['a', 'crane', 'is', 'flying']
+encoded_text = get_bert_encoding(net, tokens_a)
+# 词元：'<cls>','a','crane','is','flying','<sep>'
+encoded_text_cls = encoded_text[:, 0, :]
+encoded_text_crane = encoded_text[:, 2, :]
+print(encoded_text.shape, encoded_text_cls.shape, encoded_text_crane[0][:3])
+
+tokens_a, tokens_b = ['a', 'crane', 'driver', 'came'], ['he', 'just', 'left']
+encoded_pair = get_bert_encoding(net, tokens_a, tokens_b)
+# 词元：'<cls>','a','crane','driver','came','<sep>','he','just',
+# 'left','<sep>'
+encoded_pair_cls = encoded_pair[:, 0, :]
+encoded_pair_crane = encoded_pair[:, 2, :]
+print(encoded_pair.shape, encoded_pair_cls.shape, encoded_pair_crane[0][:3])
+```
 
 ## Chapter 14 : 自然语言处理: 应用
-### 情感分析及数据集
-
-### 情感分析：使用循环神经网络
-
-### 情感分析：使用卷积神经网络
-
-### 自然语言推断与数据集
-
-### 自然语言推断：使用注意力
-
 ### 针对序列级和词元级应用微调BERT
+**BERT微调**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192021940.png)
+
+**句子分类**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192027816.png)
+- 无论输入的是句子对还是单个句子，都是拿<cls>对应的输出向量连接全连接层进行分类
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192032462.png)
+    ![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192032386.png)
+- 使用<cls>向量的原因：
+  - 1. 预训练的时候，判断俩句子是否相邻，也是用<cls>对应的输出向量，模型能学习到这个向量是做句子级别分类的向量
+  - 2. 用别的也可以，反正微调也会更新BERT的权重，保证输出适应我的任务
+
+**命名实体识别**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192028947.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192033719.png)
+- 将非特殊词元放进全连接层进行分类，可以是二分类，也可以多分类
+
+**问题回答**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192030857.png)
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192033181.png)
+- 首先将问题和描述性文字做成两句话
+- 第一句话是问题，问题不需要进行输出；第二句话是问题的描述文字，可能会比较长
+- 分类器的作用：对于问题的描述性文字的每一个词，预测它是答案开始的那个词、结束的那个词还是别的（这是一个三分类的问题），即对片段中的每个词元预测它是不是回答的开头或者结束（开始、结束或者其他）
+
+**总结**
+![](https://cdn.jsdelivr.net/gh/IvenStarry/Image/MarkdownImage/202411192051809.png)
+
+### 自然语言推理数据集
+```python
+import os
+import re
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+d2l.DATA_HUB['SNLI'] = (
+    'https://nlp.stanford.edu/projects/snli/snli_1.0.zip',
+    '9fcde07509c7e87ec61c640c1b2753d9041758e4')
+
+data_dir = '../data/snli_1.0/snli_1.0'
+
+# * 读取数据集
+def read_snli(data_dir, is_train):
+    """将SNLI数据集解析为前提、假设和标签"""
+    def extract_text(s):
+        # 删除我们不会使用的信息
+        s = re.sub('\\(', '', s)
+        s = re.sub('\\)', '', s)
+        # 用一个空格替换两个或多个连续的空格
+        s = re.sub('\\s{2,}', ' ', s)
+        return s.strip()
+    label_set = {'entailment': 0, 'contradiction': 1, 'neutral': 2}
+    file_name = os.path.join(data_dir, 'snli_1.0_train.txt'
+                             if is_train else 'snli_1.0_test.txt')
+    with open(file_name, 'r') as f:
+        rows = [row.split('\t') for row in f.readlines()[1:]]
+    premises = [extract_text(row[1]) for row in rows if row[0] in label_set]
+    hypotheses = [extract_text(row[2]) for row in rows if row[0] \
+                in label_set]
+    labels = [label_set[row[0]] for row in rows if row[0] in label_set]
+    return premises, hypotheses, labels
+
+train_data = read_snli(data_dir, is_train=True)
+for x0, x1, y in zip(train_data[0][:3], train_data[1][:3], train_data[2][:3]):
+    # 这里label 
+    # 0 蕴涵 假设可以从前提推断出来 认同
+    # 1 矛盾 假设的否定可以从前提中推断出来 否定
+    # 2 中性 所有其他情况 不确定
+    print('前提：', x0)
+    print('假设：', x1)
+    print('标签：', y)
+
+test_data = read_snli(data_dir, is_train=False)
+for data in [train_data, test_data]:
+    print([[row for row in data[2]].count(i) for i in range(3)])
+
+# * 定义用于加载数据集的类
+class SNLIDataset(torch.utils.data.Dataset):
+    """用于加载SNLI数据集的自定义数据集"""
+    def __init__(self, dataset, num_steps, vocab=None):
+        self.num_steps = num_steps
+        all_premise_tokens = d2l.tokenize(dataset[0])
+        all_hypothesis_tokens = d2l.tokenize(dataset[1])
+        if vocab is None:
+            self.vocab = d2l.Vocab(all_premise_tokens + \
+                all_hypothesis_tokens, min_freq=5, reserved_tokens=['<pad>'])
+        else:
+            self.vocab = vocab
+        self.premises = self._pad(all_premise_tokens)
+        self.hypotheses = self._pad(all_hypothesis_tokens)
+        self.labels = torch.tensor(dataset[2])
+        print('read ' + str(len(self.premises)) + ' examples')
+
+    def _pad(self, lines):
+        return torch.tensor([d2l.truncate_pad(
+            self.vocab[line], self.num_steps, self.vocab['<pad>'])
+                         for line in lines])
+
+    def __getitem__(self, idx):
+        return (self.premises[idx], self.hypotheses[idx]), self.labels[idx]
+
+    def __len__(self):
+        return len(self.premises)
+
+# * 整合代码
+def load_data_snli(batch_size, num_steps=50):
+    """下载SNLI数据集并返回数据迭代器和词表"""
+    num_workers = d2l.get_dataloader_workers()
+    data_dir = '../data/snli_1.0/snli_1.0'
+    train_data = read_snli(data_dir, True)
+    test_data = read_snli(data_dir, False)
+    train_set = SNLIDataset(train_data, num_steps)
+    test_set = SNLIDataset(test_data, num_steps, train_set.vocab)
+    train_iter = torch.utils.data.DataLoader(train_set, batch_size,
+                                             shuffle=True,
+                                             num_workers=num_workers)
+    test_iter = torch.utils.data.DataLoader(test_set, batch_size,
+                                            shuffle=False,
+                                            num_workers=num_workers)
+    return train_iter, test_iter, train_set.vocab
+
+train_iter, test_iter, vocab = load_data_snli(128, 50)
+print(len(vocab))
+```
 
 ### 自然语言推断：微调BERT
+```python
+import json
+import multiprocessing
+import os
+import torch
+from torch import nn
+from d2l import torch as d2l
 
+# * 加载预训练的BERT
+d2l.DATA_HUB['bert.base'] = (d2l.DATA_URL + 'bert.base.torch.zip',
+                             '225d66f04cae318b841a13d32af3acc165f253ac')
+d2l.DATA_HUB['bert.small'] = (d2l.DATA_URL + 'bert.small.torch.zip',
+                              'c72329e68a732bef0452e4b96a1c341c8910f81f')
+
+def load_pretrained_model(pretrained_model, num_hiddens, ffn_num_hiddens,
+                          num_heads, num_layers, dropout, max_len, devices):
+    data_dir = d2l.download_extract(pretrained_model)
+    # 定义空词表以加载预定义词表
+    vocab = d2l.Vocab()
+    vocab.idx_to_token = json.load(open(os.path.join(data_dir,
+        'vocab.json')))
+    vocab.token_to_idx = {token: idx for idx, token in enumerate(
+        vocab.idx_to_token)}
+    bert = d2l.BERTModel(len(vocab), num_hiddens, norm_shape=[256],
+                         ffn_num_input=256, ffn_num_hiddens=ffn_num_hiddens,
+                         num_heads=4, num_layers=2, dropout=0.2,
+                         max_len=max_len, key_size=256, query_size=256,
+                         value_size=256, hid_in_features=256,
+                         mlm_in_features=256, nsp_in_features=256)
+    # 加载预训练BERT参数
+    bert.load_state_dict(torch.load(os.path.join(data_dir, 'pretrained.params'), weights_only=True))
+    return bert, vocab
+
+devices = d2l.try_all_gpus()
+bert, vocab = load_pretrained_model(
+    'bert.small', num_hiddens=256, ffn_num_hiddens=512, num_heads=4,
+    num_layers=2, dropout=0.1, max_len=512, devices=devices)
+
+# * 微调BERT的数据集
+class SNLIBERTDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, max_len, vocab=None):
+        all_premise_hypothesis_tokens = [[
+            p_tokens, h_tokens] for p_tokens, h_tokens in zip(
+            *[d2l.tokenize([s.lower() for s in sentences])
+              for sentences in dataset[:2]])]
+
+        self.labels = torch.tensor(dataset[2])
+        self.vocab = vocab
+        self.max_len = max_len
+        (self.all_token_ids, self.all_segments,
+         self.valid_lens) = self._preprocess(all_premise_hypothesis_tokens)
+        print('read ' + str(len(self.all_token_ids)) + ' examples')
+
+    def _preprocess(self, all_premise_hypothesis_tokens):
+        pool = multiprocessing.Pool(4)  # 多线程 使用4个进程
+        out = map(self._mp_worker, all_premise_hypothesis_tokens)
+        out = list(out)
+        all_token_ids = [
+            token_ids for token_ids, segments, valid_len in out]
+        all_segments = [segments for token_ids, segments, valid_len in out]
+        valid_lens = [valid_len for token_ids, segments, valid_len in out]
+        return (torch.tensor(all_token_ids, dtype=torch.long),
+                torch.tensor(all_segments, dtype=torch.long),
+                torch.tensor(valid_lens))
+
+    def _mp_worker(self, premise_hypothesis_tokens):
+        p_tokens, h_tokens = premise_hypothesis_tokens
+        self._truncate_pair_of_tokens(p_tokens, h_tokens)
+        tokens, segments = d2l.get_tokens_and_segments(p_tokens, h_tokens)
+        token_ids = self.vocab[tokens] + [self.vocab['<pad>']] \
+                             * (self.max_len - len(tokens))
+        segments = segments + [0] * (self.max_len - len(segments))
+        valid_len = len(tokens)
+        return token_ids, segments, valid_len
+
+    def _truncate_pair_of_tokens(self, p_tokens, h_tokens):
+        # 为BERT输入中的'<CLS>'、'<SEP>'和'<SEP>'词元保留位置
+        while len(p_tokens) + len(h_tokens) > self.max_len - 3:
+            if len(p_tokens) > len(h_tokens):
+                p_tokens.pop()
+            else:
+                h_tokens.pop()
+
+    def __getitem__(self, idx):
+        return (self.all_token_ids[idx], self.all_segments[idx],
+                self.valid_lens[idx]), self.labels[idx]
+
+    def __len__(self):
+        return len(self.all_token_ids)
+
+# 如果出现显存不足错误，请减少“batch_size”。在原始的BERT模型中，max_len=512
+batch_size, max_len, num_workers = 512, 128, d2l.get_dataloader_workers()
+data_dir = '../data/snli_1.0/snli_1.0'
+
+train_set = SNLIBERTDataset(d2l.read_snli(data_dir, True), max_len, vocab)
+test_set = SNLIBERTDataset(d2l.read_snli(data_dir, False), max_len, vocab)
+train_iter = torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
+                                   num_workers=num_workers)
+test_iter = torch.utils.data.DataLoader(test_set, batch_size,
+                                  num_workers=num_workers)
+
+
+
+# * 微调BERT
+class BERTClassifier(nn.Module):
+    def __init__(self, bert):
+        super(BERTClassifier, self).__init__()
+        self.encoder = bert.encoder
+        self.hidden = bert.hidden
+        self.output = nn.Linear(256, 3)
+
+    def forward(self, inputs):
+        tokens_X, segments_X, valid_lens_x = inputs
+        encoded_X = self.encoder(tokens_X, segments_X, valid_lens_x)
+        # 将X的第一个元素 就是<cls>对应位置输出的元素拿出来放进hidden和output中
+        return self.output(self.hidden(encoded_X[:, 0, :]))
+
+net = BERTClassifier(bert)
+
+lr, num_epochs = 1e-4, 5
+trainer = torch.optim.Adam(net.parameters(), lr=lr)
+loss = nn.CrossEntropyLoss(reduction='none')
+d2l.train_ch13(net, train_iter, test_iter, loss, trainer, num_epochs, devices)
+```
